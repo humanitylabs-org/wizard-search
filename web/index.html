@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b14">
+<meta name="referrer" content="no-referrer">
+<title>Search</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <form id="f" class="bar" autocomplete="off" role="search">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input id="q" name="q" type="search" enterkeyhint="search" placeholder="Search privately" aria-label="Search">
+    <button type="button" id="clear" class="x" aria-label="Clear" hidden>✕</button>
+  </form>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-t="all" aria-selected="true">All</button>
+    <button role="tab" data-t="images" aria-selected="false">Images</button>
+  </nav>
+</header>
+<main id="main">
+  <section id="empty" class="empty">
+    <div class="orbish">⌕</div>
+    <p><b>Say “image search …” or “search …”</b> to the orb, or type above.</p>
+    <p class="dim">Private: no Google account, no tracking. Answers come from Archimedes’ private model.</p>
+  </section>
+  <section id="all" hidden>
+    <article id="ov" class="ov" aria-live="polite"></article>
+    <div id="strip" class="strip"></div>
+    <ol id="web" class="web"></ol>
+  </section>
+  <section id="images" hidden>
+    <div id="grid" class="grid"></div>
+  </section>
+</main>
+<div id="lb" class="lb" hidden>
+  <button class="lb-x" data-lb="close" aria-label="Close">✕</button>
+  <img alt="">
+  <div class="lb-cap"><b></b><a target="_blank" rel="noopener noreferrer">Visit page ↗</a></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
