@@ -78,11 +78,12 @@
     }).join('') : `<p class="note">${d.error ? 'Image search is unavailable right now.' : 'No images found.'}</p>`;
     $('#strip').innerHTML = list.length ? list.slice(0, 8).map((im, i) => `<button data-i="${i}"><img src="${BASE}thumb/${im.id}.jpg" alt="${esc(im.title)}" loading="lazy"></button>`).join('') + '<button class="more" data-more>More images →</button>' : '';
   }
-  function view(i) {
+  function view(i, withMenu) {
     const list = (S.images && S.images.images) || []; const im = list[i]; if (!im) return;
-    const items = list.map(x => ({ url: `${BASE}img/${x.id}.jpg`, name: x.title || x.host, kind: 'image', mime: '' }));
+    // download: the same image as a named attachment, so Save on Android files it under the result's title.
+    const items = list.map(x => ({ url: `${BASE}img/${x.id}.jpg`, download: `${BASE}img/${x.id}.jpg?dl=${encodeURIComponent(x.title || x.host || 'image')}`, name: x.title || x.host, kind: 'image', mime: '' }));
     const V = shellViewer();
-    if (V && V.open(items, i)) return;
+    if (V && V.open(items, i)) { if (withMenu && V.menu) V.menu(); return; }
     const lb = $('#lb'); lb.hidden = false; lb.querySelector('img').src = items[i].url;
     lb.querySelector('b').textContent = im.title; const a = lb.querySelector('a'); a.href = im.page || im.full;
   }
@@ -93,9 +94,20 @@
   document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) tab(b.dataset.t); });
   document.addEventListener('click', e => {
     const more = e.target.closest('[data-more]'); if (more) return tab('images');
-    const t = e.target.closest('[data-i]'); if (t) { e.preventDefault(); view(+t.dataset.i); }
+    const t = e.target.closest('[data-i]'); if (t) { e.preventDefault(); const V = shellViewer(); if (V && V.isOpen && V.isOpen()) return; view(+t.dataset.i); } // already open: the finger lifting off a long-press
     if (e.target.closest('[data-lb="close"]')) $('#lb').hidden = true;
   });
+  // Long-press (Android) or right-click a result: open it with Save / Share, like holding an image in a browser.
+  const holdOpen = t => { const V = shellViewer(); if (!V) return false; if (V.isOpen && V.isOpen()) { if (V.menu) V.menu(); } else view(+t.dataset.i, true); return true; };
+  document.addEventListener('contextmenu', e => { const t = e.target.closest('[data-i]'); if (t && holdOpen(t)) e.preventDefault(); });
+  let lp = null; // touch hold timer (WebViews don't always turn a hold into contextmenu); a scroll cancels it
+  const lpStop = () => { if (lp) { clearTimeout(lp.t); lp = null; } };
+  document.addEventListener('pointerdown', e => {
+    const t = e.target.closest('[data-i]'); lpStop(); if (!t || e.pointerType === 'mouse' || !shellViewer()) return;
+    lp = { x: e.clientX, y: e.clientY, t: setTimeout(() => { lp = null; holdOpen(t); }, 500) };
+  }, { passive: true });
+  document.addEventListener('pointermove', e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) lpStop(); }, { passive: true });
+  ['pointerup', 'pointercancel', 'scroll'].forEach(k => document.addEventListener(k, lpStop, { passive: true, capture: true }));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   const p = new URLSearchParams(location.search);

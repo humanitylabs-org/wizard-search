@@ -52,6 +52,8 @@ main{padding:4px 12px 40px}
 .tile{break-inside:avoid;display:block;width:100%;margin:0 0 8px;text-align:left;position:relative}
 .tile .im{display:block;width:100%;border-radius:10px;background:var(--card);overflow:hidden}
 .tile img{display:block;width:100%;height:auto;min-height:60px}
+.tile,.strip button{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.tile img,.strip img{-webkit-user-drag:none}
 .tile .cap{display:block;font-size:11.5px;color:var(--ink2);padding:4px 2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile .cap b{color:var(--ink3);font-weight:500}
 .err{color:#ff9db0;padding:20px 4px;font-size:14px}
