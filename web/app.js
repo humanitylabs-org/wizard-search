@@ -34,18 +34,34 @@
     if (!S.images) { S.images = 'loading'; api('images', q).then(d => { if (seq === S.seq) { S.images = d; paintImages(); } }).catch(e => { if (seq === S.seq) { S.images = { images: [], error: e.message }; paintImages(); } }); }
     if (S.tab !== 'all') return;
     if (!S.web) { S.web = 'loading'; api('web', q).then(d => { if (seq === S.seq) { S.web = d; paintWeb(); } }).catch(e => { if (seq === S.seq) { S.web = { results: [], error: e.message }; paintWeb(); } }); }
-    if (!S.ov) { S.ov = 'loading'; api('overview', q).then(d => { if (seq === S.seq) { S.ov = d; paintOv(); } }).catch(e => { if (seq === S.seq) { S.ov = { answer: '', error: e.message }; paintOv(); } }); }
+    if (!S.ov) streamOv(seq, q);
+  }
+  // The overview streams: sources land first (~1-2 s), then the answer types in token by token.
+  function streamOv(seq, q) {
+    S.ov = { answer: '', sources: [], streaming: true };
+    let es;
+    const fail = err => { if (seq !== S.seq) return; S.ov = { ...S.ov, streaming: false, error: S.ov.answer ? '' : err }; paintOv(); };
+    try { es = new EventSource(`${BASE}api/overview-stream?q=${encodeURIComponent(q)}`); } catch (e) { return fail('stream'); }
+    S.es && S.es.close(); S.es = es;
+    let raf = 0; const paintSoon = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (seq === S.seq) paintOv(); }); };
+    es.addEventListener('sources', ev => { if (seq !== S.seq) return es.close(); S.ov.sources = JSON.parse(ev.data).sources || []; });
+    es.addEventListener('delta', ev => { if (seq !== S.seq) return es.close(); S.ov.answer += JSON.parse(ev.data).t || ''; paintSoon(); });
+    es.addEventListener('done', ev => {
+      es.close(); if (seq !== S.seq) return; const d = JSON.parse(ev.data || '{}');
+      S.ov = { ...S.ov, streaming: false, model: d.model || S.ov.model, answer: d.answer || S.ov.answer, error: d.error || '' }; paintOv();
+    });
+    es.onerror = () => { es.close(); fail('stream'); };
   }
   const shimmer = () => '<h3><i>✦</i> AI overview</h3><div class="shimmer"></div><div class="shimmer"></div><div class="shimmer s"></div>';
   function paintOv() {
     const d = S.ov, el = $('#ov');
-    if (!d || d === 'loading') { el.innerHTML = shimmer(); return; }
+    if (!d || d === 'loading' || (d.streaming && !d.answer)) { el.innerHTML = shimmer(); return; }
     if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'no results' ? 'No sources found for an overview.' : 'Overview unavailable right now.'}</p>`; return; }
     const src = Object.fromEntries((d.sources || []).map(s => [s.n, s]));
-    const body = d.answer.split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d+)\]/g, (m, n) => src[n] ? `<a class="cite" href="${esc(src[n].url)}" target="_blank" rel="noopener noreferrer" title="${esc(src[n].title)}">${n}</a>` : '')}</p>`).join('');
+    const body = d.answer.replace(/【(\d+)[^】]*】/g, '[$1]').split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d+)\]/g, (m, n) => src[n] ? `<a class="cite" href="${esc(src[n].url)}" target="_blank" rel="noopener noreferrer" title="${esc(src[n].title)}">${n}</a>` : '')}</p>`).join('');
     const used = new Set([...d.answer.matchAll(/\[(\d+)\]/g)].map(m => +m[1]));
     const chips = (d.sources || []).filter(s => used.has(s.n)).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"><b>${s.n}</b>${esc(s.host)}</a>`).join('');
-    el.innerHTML = `<h3><i>✦</i> AI overview</h3>${body}${chips ? `<div class="srcs">${chips}</div>` : ''}<div class="meta">Private model · ${esc(d.model || '')}</div>`;
+    el.innerHTML = `<h3><i>✦</i> AI overview</h3>${body}${d.streaming ? '<span class="caret"></span>' : ''}${chips && !d.streaming ? `<div class="srcs">${chips}</div>` : ''}${d.streaming ? '' : `<div class="meta">Private model · ${esc(d.model || '')}</div>`}`;
   }
   function paintWeb() {
     const d = S.web, el = $('#web');
@@ -85,5 +101,5 @@
   const p = new URLSearchParams(location.search);
   if (p.get('q')) run(p.get('q'), p.get('tab') === 'images' ? 'images' : 'all');
   else setTimeout(() => $('#q').focus(), 50);
-  window.WizardSearch = { run, tab, state: () => ({ q: S.q, tab: S.tab, images: S.images?.images?.length || 0, web: S.web?.results?.length || 0, overview: !!S.ov?.answer }) };
+  window.WizardSearch = { run, tab, state: () => ({ q: S.q, tab: S.tab, images: S.images?.images?.length || 0, web: S.web?.results?.length || 0, overview: !!S.ov?.answer && !S.ov?.streaming, streaming: !!S.ov?.streaming }) };
 })();

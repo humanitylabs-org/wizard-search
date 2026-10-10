@@ -207,35 +207,86 @@ def _local(q: str) -> list[dict]:
 
 
 POOL = ThreadPoolExecutor(max_workers=24)
+FC_CLOUD_URL = (os.environ.get("FIRECRAWL_CLOUD_URL") or _env_value(HOME / ".config/firecrawl-hybrid-router.env", "FIRECRAWL_CLOUD_URL") or "https://api.firecrawl.dev").rstrip("/")
+FC_CLOUD_KEY = os.environ.get("FIRECRAWL_CLOUD_API_KEY") or _env_value(HOME / ".config/firecrawl-hybrid-router.env", "FIRECRAWL_CLOUD_API_KEY")
+DDG_COOLDOWN = {"until": 0.0}
+
+
+def _cloud(q: str) -> list[dict]:
+    """Firecrawl Cloud search: consistently ~1.5-3 s, 2 credits a query (already-paid plan)."""
+    if not FC_CLOUD_KEY:
+        raise RuntimeError("no firecrawl cloud key")
+    req = urllib.request.Request(FC_CLOUD_URL + "/v2/search", data=json.dumps({"query": q, "limit": 8}).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + FC_CLOUD_KEY})
+    with urllib.request.urlopen(req, timeout=12) as r:  # nosec B310 constant host
+        d = json.load(r)
+    rows = [{"url": x["url"], "title": x.get("title") or x["url"], "snippet": x.get("description") or ""}
+            for x in (d.get("data") or {}).get("web") or [] if x.get("url")]
+    if not rows:
+        raise RuntimeError("empty cloud")
+    return rows
+
+
+def _ddg(q: str) -> list[dict]:
+    """DuckDuckGo HTML through the Thales residential egress: ~1 s and free, but it challenges after a
+    handful of queries, so it sits out for 10 minutes after any challenge."""
+    if time.time() < DDG_COOLDOWN["until"]:
+        raise RuntimeError("ddg cooling down")
+    out = subprocess.run(["curl", "-s", "-m", "4", "-x", SOCKS, "-A", UA, "-H", "Accept-Language: en-US,en;q=0.9",
+                          "--data-urlencode", "q=" + q, "--data", "kl=us-en", "https://html.duckduckgo.com/html/"],
+                         capture_output=True, text=True, timeout=6).stdout
+    rows = []
+    for m in re.finditer(r'<a rel="nofollow" class="result__a" href="([^"]+)">(.*?)</a>.*?<a class="result__snippet"[^>]*>(.*?)</a>', out, re.S):
+        u = html.unescape(m.group(1))
+        red = re.search(r"uddg=([^&]+)", u)
+        if red:
+            u = urllib.parse.unquote(red.group(1))
+        if not u.startswith(("http://", "https://")) or "duckduckgo.com/y.js" in u:
+            continue
+        clean = lambda v: " ".join(html.unescape(re.sub(r"<[^>]+>", " ", v)).split())
+        rows.append({"url": u, "title": clean(m.group(2)), "snippet": clean(m.group(3))})
+    if not rows:
+        DDG_COOLDOWN["until"] = time.time() + 600
+        raise RuntimeError("ddg challenged")
+    return rows
 
 
 def web_search(q: str) -> dict:
-    """SERP is the quality lane but its latency swings 2-40 s per request, so: start it, hedge with a
-    second SERP request after 5 s, run the local lane alongside, and take SERP when it lands within
-    ~18 s; otherwise the first relevant batch from any lane."""
+    """Speed first: DuckDuckGo (free, ~1 s) gets a 1.2 s head start, then Firecrawl Cloud (~1.5 s, paid) joins;
+    the first relevant batch wins.
+    Google SERP (Bright Data, 2-40 s) and the local lane only join if both fast lanes fail."""
     started = time.time()
-    futs = {POOL.submit(_serp, q): "serp", POOL.submit(_local, q): "local"}
-    hedged = False
-    local_rows = None
-    while futs and time.time() - started < 32:
-        done, _ = wait(list(futs), timeout=1.0, return_when=FIRST_COMPLETED)
+    futs = {}
+    if time.time() >= DDG_COOLDOWN["until"]:
+        futs[POOL.submit(_ddg, q)] = "ddg"
+    cloud_at = started + (1.2 if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
+    cloud_started = slow_started = False
+    while time.time() - started < 30:
+        if not cloud_started and (time.time() >= cloud_at or not futs):
+            futs[POOL.submit(_cloud, q)] = "cloud"
+            cloud_started = True
+        if not futs and not slow_started:
+            futs[POOL.submit(_serp, q)] = "serp"
+            futs[POOL.submit(_local, q)] = "local"
+            slow_started = True
+        if not futs:
+            break
+        done, _ = wait(list(futs), timeout=0.2 if not cloud_started else 0.5, return_when=FIRST_COMPLETED)
         for f in done:
             lane = futs.pop(f)
             try:
                 rows = f.result()
             except Exception:
                 continue
-            if lane == "serp":
-                return _finish(q, rows, "serp")
-            local_rows = rows
-        if not hedged and time.time() - started > 5:
+            if lane in ("ddg", "local") and not _relevant(q, rows):
+                continue
+            return _finish(q, rows, lane)
+        fast_left = not cloud_started or any(v in ("ddg", "cloud") for v in futs.values())
+        if not slow_started and (not fast_left or time.time() - started > 6):
             futs[POOL.submit(_serp, q)] = "serp"
-            hedged = True
-        if local_rows and time.time() - started > 18:
-            break
-        if local_rows and not any(v == "serp" for v in futs.values()):
-            break
-    return _finish(q, local_rows or [], "local" if local_rows else "")
+            futs[POOL.submit(_local, q)] = "local"
+            slow_started = True
+    return _finish(q, [], "")
 
 
 def _finish(q: str, rows: list[dict], source: str) -> dict:
@@ -251,26 +302,68 @@ If the query is a name, place or thing, say what it is. If it asks for options o
 If the sources do not answer it, say so in one sentence. Today is %s."""
 
 
+def _overview_request(q: str, rows: list[dict], stream: bool) -> urllib.request.Request:
+    ctx = "\n".join(f"[{i}] {r['title']} ({r['host']}): {r['snippet']}" for i, r in enumerate(rows, 1))
+    body = {
+        "model": LLM_MODEL, "max_tokens": 700, "temperature": 0.2, "reasoning_effort": "low", "stream": stream,
+        "messages": [{"role": "system", "content": OVERVIEW_SYSTEM % time.strftime("%Y-%m-%d")},
+                     {"role": "user", "content": f"Query: {q}\n\nSources:\n{ctx}"}],
+    }
+    return urllib.request.Request(LLM_URL, data=json.dumps(body).encode(),
+                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + TINFOIL_KEY})
+
+
+def _sources(rows: list[dict]) -> list[dict]:
+    return [{"n": i, "url": r["url"], "title": r["title"], "host": r["host"]} for i, r in enumerate(rows, 1)]
+
+
+def _fix_cites(text: str) -> str:
+    return re.sub(r"【(\d+)[^】]*】", r"[\1]", text)
+
+
 def overview(q: str) -> dict:
     web = cached(WEB_CACHE, q, web_search)
     rows = web["results"][:8]
     if not rows:
         return {"q": q, "answer": "", "sources": [], "error": "no results"}
-    ctx = "\n".join(f"[{i}] {r['title']} ({r['host']}): {r['snippet']}" for i, r in enumerate(rows, 1))
-    body = {
-        "model": LLM_MODEL, "max_tokens": 900, "temperature": 0.2, "reasoning_effort": "low",
-        "messages": [{"role": "system", "content": OVERVIEW_SYSTEM % time.strftime("%Y-%m-%d")},
-                     {"role": "user", "content": f"Query: {q}\n\nSources:\n{ctx}"}],
-    }
-    req = urllib.request.Request(LLM_URL, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + TINFOIL_KEY})
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=40) as r:  # nosec B310 loopback
+    with urllib.request.urlopen(_overview_request(q, rows, False), timeout=40) as r:  # nosec B310 loopback
         d = json.load(r)
-    answer = (d["choices"][0]["message"].get("content") or "").strip()
-    answer = re.sub(r"【(\d+)[^】]*】", r"[\1]", answer)
-    return {"q": q, "answer": answer, "sources": [{"n": i, "url": r["url"], "title": r["title"], "host": r["host"]} for i, r in enumerate(rows, 1)],
-            "model": LLM_MODEL, "ms": int((time.time() - t0) * 1000)}
+    answer = _fix_cites((d["choices"][0]["message"].get("content") or "").strip())
+    return {"q": q, "answer": answer, "sources": _sources(rows), "model": LLM_MODEL, "ms": int((time.time() - t0) * 1000)}
+
+
+def overview_stream(q: str, emit) -> None:
+    """Server-sent events: `sources` as soon as results land, then `delta` tokens, then `done`."""
+    hit = OVR_CACHE.get(q.lower())
+    if hit is not None:
+        emit("sources", {"sources": hit.get("sources", []), "source": "cache"})
+        emit("delta", {"t": hit.get("answer", "")})
+        emit("done", {"model": hit.get("model", ""), "cached": True, "error": hit.get("error", "")})
+        return
+    t0 = time.time()
+    web = cached(WEB_CACHE, q, web_search)
+    rows = web["results"][:8]
+    emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000)})
+    if not rows:
+        emit("done", {"error": "no results"})
+        return
+    parts = []
+    with urllib.request.urlopen(_overview_request(q, rows, True), timeout=40) as r:  # nosec B310 loopback
+        for raw in r:
+            line = raw.decode("utf-8", "ignore").strip()
+            if not line.startswith("data:") or line == "data: [DONE]":
+                continue
+            try:
+                delta = (json.loads(line[5:]).get("choices") or [{}])[0].get("delta", {}).get("content")
+            except ValueError:
+                continue
+            if delta:
+                parts.append(delta)
+                emit("delta", {"t": delta})
+    answer = _fix_cites("".join(parts).strip())
+    OVR_CACHE.put(q.lower(), {"q": q, "answer": answer, "sources": _sources(rows), "model": LLM_MODEL})
+    emit("done", {"model": LLM_MODEL, "ms": int((time.time() - t0) * 1000), "answer": answer})
 
 
 def cached(cache: TTLCache, q: str, fn):
@@ -370,6 +463,10 @@ class H(BaseHTTPRequestHandler):
                 cache, fn = {"/api/images": (IMG_CACHE, image_search), "/api/web": (WEB_CACHE, web_search),
                              "/api/overview": (OVR_CACHE, overview)}[path]
                 return self._json(200, cached(cache, q, fn))
+            if path == "/api/overview-stream":
+                if not q:
+                    return self._json(400, {"error": "empty query"})
+                return self._sse(lambda emit: overview_stream(q, emit))
             m = re.fullmatch(r"/(img|thumb)/([0-9a-f]{20})\.jpg", path)
             if m:
                 src = IMG_IDS.get(("t" if m.group(1) == "thumb" else "") + m.group(2))
@@ -386,6 +483,28 @@ class H(BaseHTTPRequestHandler):
             return self._static(path)
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": type(e).__name__})
+
+    def _sse(self, producer):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        def emit(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
+            self.wfile.flush()
+        try:
+            producer(emit)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as e:  # noqa: BLE001
+            try:
+                emit("done", {"error": type(e).__name__})
+            except OSError:
+                pass
 
     def _static(self, path):
         if path in ("", "/"):

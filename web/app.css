@@ -64,3 +64,6 @@ main{padding:4px 12px 40px}
 .lb-x{position:absolute;top:10px;right:10px;width:40px;height:40px;border-radius:50%;background:#fff2;font-size:18px}
 
 [hidden]{display:none!important}
+
+.caret{display:inline-block;width:7px;height:15px;margin-left:2px;vertical-align:-2px;background:var(--v);border-radius:1px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
