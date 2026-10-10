@@ -26,6 +26,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import unicodedata
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
@@ -86,6 +87,7 @@ IMG_CACHE = TTLCache(200, 1800)
 WEB_CACHE = TTLCache(200, 1800)
 OVR_CACHE = TTLCache(200, 1800)
 IMG_IDS = TTLCache(20000, 6 * 3600)
+FULLS = TTLCache(24, 1800)  # full-size bytes just viewed, so Save doesn't fetch them again
 THUMBS = TTLCache(800, 3600)  # thumbnail bytes, so re-opening a search paints instantly  # id -> original image URL (the proxy serves nothing else)
 INFLIGHT: dict[str, threading.Event] = {}
 INFLIGHT_LOCK = threading.Lock()
@@ -399,6 +401,22 @@ def cached(cache: TTLCache, q: str, fn):
 
 
 # ---------------------------------------------------------------- image proxy
+IMG_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/avif": ".avif",
+           "image/bmp": ".bmp", "image/heic": ".heic"}
+
+
+def attachment(name: str, ctype: str) -> str:
+    """Content-Disposition for a saved image: the result's title as the file name, the real type's extension.
+    Android's URLUtil only reads a terminal quoted filename, so the ASCII name goes last-and-only."""
+    ext = IMG_EXT.get(ctype.split(";")[0].strip().lower(), ".jpg")
+    n = re.sub(r"[\\/:*?\"<>|\x00-\x1f\x7f]+", " ", name or "")
+    n = unicodedata.normalize("NFKD", n).encode("ascii", "ignore").decode()
+    n = re.sub(r"\s+", " ", n).strip(" .")[:80].strip(" .") or "image"
+    if not n.lower().endswith(ext):
+        n += ext
+    return f'attachment; filename="{n}"'
+
+
 def public_host(url: str) -> bool:
     try:
         host = urllib.parse.urlsplit(url).hostname or ""
@@ -477,14 +495,20 @@ class H(BaseHTTPRequestHandler):
                 src = IMG_IDS.get(("t" if m.group(1) == "thumb" else "") + m.group(2))
                 if not src:
                     return self._send(404, b"expired", "text/plain")
-                got = THUMBS.get(m.group(2)) if m.group(1) == "thumb" else None
+                thumb = m.group(1) == "thumb"
+                got = (THUMBS if thumb else FULLS).get(m.group(2))
                 if not got:
                     got = fetch_image(src)
-                    if got and m.group(1) == "thumb" and len(got[1]) < 400_000:
+                    if got and thumb and len(got[1]) < 400_000:
                         THUMBS.put(m.group(2), got)
+                    elif got and not thumb and len(got[1]) < 6_000_000:
+                        FULLS.put(m.group(2), got)
                 if not got:
                     return self._send(302, b"", "text/plain", {"Location": src})
-                return self._send(200, got[1], got[0], {"Cache-Control": "private, max-age=86400"})
+                extra = {"Cache-Control": "private, max-age=86400"}
+                if "dl" in qs:  # Save: a named attachment, so Android's download manager files it under that name
+                    extra["Content-Disposition"] = attachment(qs["dl"][0], got[0])
+                return self._send(200, got[1], got[0], extra)
             return self._static(path)
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": type(e).__name__})
