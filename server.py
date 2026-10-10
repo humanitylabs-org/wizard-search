@@ -7,6 +7,8 @@ Routes (all under /wizard-search):
   GET  /api/web?q=            web results (Bright Data SERP, parsed; local Firecrawl router fallback)
   GET  /api/overview?q=       short cited answer over the web results (Tinfoil private inference)
   GET  /img/<id>.jpg          full-size image proxy, only for ids issued by a recent image search
+  POST /api/translate         {"items": [...], "to": "English"} → same-order translations (Tinfoil gemma4-31b, gpt-oss fallback)
+  POST /api/read-image        screenshot bytes → {"lines": [...]} (Tinfoil gemma4-31b vision), for screens with no text layer
   GET  /api/health
 
 Loopback only; the private gateway adds Tailnet identity. Queries are never logged.
@@ -371,6 +373,86 @@ def overview_stream(q: str, emit) -> None:
     emit("done", {"model": LLM_MODEL, "ms": int((time.time() - t0) * 1000), "answer": answer})
 
 
+TRANSLATE_MODEL = os.environ.get("WIZARD_TRANSLATE_MODEL", "gemma4-31b")
+TRANSLATE_FALLBACK = os.environ.get("WIZARD_TRANSLATE_FALLBACK", "gpt-oss-120b")
+VISION_MODEL = os.environ.get("WIZARD_VISION_MODEL", "gemma4-31b")
+TRANSLATE_SYSTEM = (
+    "Translate each numbered item into natural %s as it would read in an app, on a menu or on a sign. "
+    "Keep numbers, prices, names, links and emoji. If an item is already %s, return it unchanged. "
+    "Reply with JSON only, no code fence: {\"from\": \"<source language(s)>\", \"items\": [\"...\"]} "
+    "with exactly one entry per input item, in the same order, without the item numbers.")
+READ_IMAGE_SYSTEM = (
+    "Read all the text visible in this phone screenshot, top to bottom, left to right, exactly as written "
+    "(keep the original language and spelling). One entry per line of text; skip the clock, battery and other "
+    "status-bar icons. Reply with JSON only, no code fence: {\"lines\": [\"...\"]}")
+TRANSLATE_CACHE = TTLCache(2000, 6 * 3600)
+
+
+def _llm(model: str, messages: list, max_tokens: int, timeout: int) -> str:
+    body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "messages": messages}
+    if model.startswith("gpt-oss"):
+        body["reasoning_effort"] = "low"
+    req = urllib.request.Request(LLM_URL, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + TINFOIL_KEY})
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 loopback Tinfoil proxy
+        d = json.load(r)
+    return (d["choices"][0]["message"].get("content") or "").strip()
+
+
+def _json_reply(text: str) -> dict:
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+    m = re.search(r"\{.*\}", t, re.S)
+    return json.loads(m.group(0) if m else t)
+
+
+def _strip_num(s: str) -> str:
+    return re.sub(r"^\s*\d{1,3}[.)]\s+", "", str(s)).strip()
+
+
+def translate_items(items: list[str], to: str = "English") -> dict:
+    """On-screen text → English, item by item (private Tinfoil inference). Cached per item."""
+    items = [re.sub(r"\s+", " ", str(x or "")).strip()[:1200] for x in items][:150]
+    out: list[str | None] = [TRANSLATE_CACHE.get(to + "\x00" + x) for x in items]
+    todo = [i for i, x in enumerate(items) if out[i] is None and x]
+    langs: set[str] = set()
+    t0 = time.time()
+    for start in range(0, len(todo), 40):
+        chunk = todo[start:start + 40]
+        prompt = "\n".join(f"{n + 1}. {items[i]}" for n, i in enumerate(chunk))
+        got = None
+        for model in (TRANSLATE_MODEL, TRANSLATE_FALLBACK):
+            try:
+                j = _json_reply(_llm(model, [{"role": "system", "content": TRANSLATE_SYSTEM % (to, to)},
+                                             {"role": "user", "content": prompt}], 4000, 60))
+                tr = [_strip_num(s) for s in (j.get("items") or [])]
+                if len(tr) == len(chunk):
+                    got = tr
+                    f = j.get("from")
+                    for lang in (f if isinstance(f, list) else str(f or "").split(",")):
+                        if str(lang).strip():
+                            langs.add(str(lang).strip())
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if got is None:
+            raise RuntimeError("translate failed")
+        for i, t in zip(chunk, got):
+            out[i] = t
+            TRANSLATE_CACHE.put(to + "\x00" + items[i], t)
+    return {"to": to, "from": ", ".join(sorted(langs)), "items": [o or "" for o in out], "ms": int((time.time() - t0) * 1000)}
+
+
+def read_image(data: bytes, mime: str) -> dict:
+    """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model."""
+    t0 = time.time()
+    url = f"data:{mime};base64," + base64.b64encode(data).decode()
+    j = _json_reply(_llm(VISION_MODEL, [{"role": "system", "content": READ_IMAGE_SYSTEM},
+                                        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
+                                                                     {"type": "text", "text": "Read the text."}]}], 4000, 90))
+    lines = [re.sub(r"\s+", " ", str(x)).strip() for x in (j.get("lines") or []) if str(x).strip()][:300]
+    return {"lines": lines, "model": VISION_MODEL, "ms": int((time.time() - t0) * 1000)}
+
+
 def cached(cache: TTLCache, q: str, fn):
     key = q.lower()
     hit = cache.get(key)
@@ -448,6 +530,39 @@ class H(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
+
+    def do_POST(self):
+        """POST /api/translate {"items": [...], "to": "English"} and POST /api/read-image (image bytes).
+        Used by the Wizard OS orb's Screen mode. Native callers only: a browser page from elsewhere is refused."""
+        path = urllib.parse.urlsplit(self.path).path
+        if not path.startswith(PREFIX + "/"):
+            return self._json(404, {"error": "not found"})
+        path = path[len(PREFIX):]
+        if self.headers.get("Sec-Fetch-Site", "") == "cross-site":
+            return self._json(403, {"error": "cross_origin_request"})
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = -1
+        if n <= 0 or n > 8 * 1024 * 1024:
+            return self._json(413 if n > 0 else 400, {"error": "bad length"})
+        body = self.rfile.read(n)
+        try:
+            if path == "/api/translate":
+                j = json.loads(body)
+                items = j.get("items")
+                if not isinstance(items, list) or not items:
+                    return self._json(400, {"error": "items required"})
+                to = re.sub(r"[^A-Za-z ]", "", str(j.get("to") or "English"))[:30] or "English"
+                return self._json(200, translate_items(items, to))
+            if path == "/api/read-image":
+                mime = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if mime not in ("image/png", "image/jpeg", "image/webp"):
+                    return self._json(415, {"error": "image required"})
+                return self._json(200, read_image(body, mime))
+            return self._json(404, {"error": "not found"})
+        except Exception as e:  # noqa: BLE001
+            return self._json(502, {"error": type(e).__name__})
 
     def do_GET(self):
         u = urllib.parse.urlsplit(self.path)
