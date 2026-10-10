@@ -292,6 +292,11 @@ def web_search(q: str) -> dict:
 def _finish(q: str, rows: list[dict], source: str) -> dict:
     for r in rows:
         r["host"] = re.sub(r"^www\.", "", urllib.parse.urlsplit(r["url"]).hostname or "")
+        sn = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", r.get("snippet") or "")          # images
+        sn = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", sn)                       # links -> text
+        sn = re.sub(r"(^|\s)#{1,6}\s+", r"\1", sn)                                # headings
+        sn = re.sub(r"[*_`]{1,3}", "", sn)
+        r["snippet"] = " ".join(sn.split())[:320]
     return {"q": q, "source": source, "results": rows[:10]}
 
 
