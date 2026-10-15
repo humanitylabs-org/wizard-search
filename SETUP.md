@@ -16,6 +16,25 @@ A legacy standalone service may set WIZARD_SEARCH_BASE=/wizard-search instead. D
 a stripped path proxy with that setting. Gateway authentication is REQUIRED; bind direct published
 ports only to loopback. No app-owned public auth/rate-limiting is supplied.
 
+## Private release archive installation
+
+This test release distributes architecture-specific Docker archives through the private GitHub
+release `v0.1.0-test.1` in `humanitylabs-org/wizard-search`. Repository read access is required;
+the GHCR-shaped image name is a **local imported tag**, not a published registry image.
+Download `search-linux-arm64.tar.gz` or `search-linux-amd64.tar.gz` for the recipient host,
+plus `SHA256SUMS` and `search-package.tar.gz`, using authenticated GitHub release downloads.
+Verify the downloaded files against SHA256SUMS, then `docker load -i search-linux-<arch>.tar.gz`.
+Both architecture archives load `ghcr.io/humanitylabs-org/wizard-search:0.1.0-test.1`; load only
+the matching architecture on a recipient host. The shipped Compose uses `pull_policy: never`.
+Check the loaded image ID, architecture and revision against `search-store-manifest.json`.
+Extract the source/setup package for the App Manager integration; never replace its native
+Dockerfile/Compose with a generic inline template. No registry login or provider credentials
+are needed to import the image. Provider configuration is a separate, required next step.
+The platform owner registers the private Store entry and authenticated gateway; this archive
+receipt does not claim that recipient Store access or installation has already been verified.
+For archive upgrades and rollback, pin the verified archive SHA256 and loaded image ID instead
+of assuming a registry manifest digest exists.
+
 ## Minimum useful configuration (choose an existing route)
 
 Set **one** of these in private runtime environment, then recreate the container:
