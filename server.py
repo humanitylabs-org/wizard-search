@@ -159,6 +159,8 @@ def image_search(q: str) -> dict:
         except Exception:
             pass
     for it in items:
+        if not it["page"].startswith(("https://", "http://")):
+            it["page"] = it["full"]
         iid = hashlib.sha1(it["full"].encode()).hexdigest()[:20]
         IMG_IDS.put(iid, it["full"])
         IMG_IDS.put("t" + iid, it["thumb"])
@@ -309,6 +311,7 @@ def web_search(q: str) -> dict:
 
 
 def _finish(q: str, rows: list[dict], source: str) -> dict:
+    rows = [r for r in rows if str(r.get("url", "")).startswith(("https://", "http://"))]
     for r in rows:
         r["host"] = re.sub(r"^www\.", "", urllib.parse.urlsplit(r["url"]).hostname or "")
         sn = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", r.get("snippet") or "")          # images
@@ -516,7 +519,10 @@ def attachment(name: str, ctype: str) -> str:
 
 def public_host(url: str) -> bool:
     try:
-        host = urllib.parse.urlsplit(url).hostname or ""
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
+            return False
+        host = parsed.hostname or ""
         for info in socket.getaddrinfo(host, None):
             ip = ipaddress.ip_address(info[4][0])
             if not ip.is_global:
@@ -627,7 +633,7 @@ class H(BaseHTTPRequestHandler):
         try:
             if path == "/mcp":
                 return self._mcp(json.loads(body))
-            if path in ("/api/translate", "/api/read-image") and not configuration()["capabilities"]["overview"]:
+            if path in ("/api/translate", "/api/read-image") and not LLM_URL:
                 return self._json(503, setup_error("overview"))
             if path == "/api/translate":
                 j = json.loads(body)
