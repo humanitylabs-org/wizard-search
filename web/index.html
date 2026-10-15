@@ -28,6 +28,7 @@
 </header>
 <main id="main">
   <aside id="setup" role="status"><b id="setup-status">Checking provider configuration…</b><p><a href="SETUP.md" target="_blank">Setup instructions for your agent ↗</a> · <a href="setup.json" target="_blank">Machine-readable requirements ↗</a></p></aside>
+  <p id="voice-status" class="note" role="status" aria-live="polite" hidden></p>
   <section id="empty" class="empty">
     <div class="orbish">⌕</div>
     <p><b>Say “image search …” or “search …”</b> to the orb, or type above.</p>
@@ -48,6 +49,7 @@
   <div class="lb-cap"><b></b><a target="_blank" rel="noopener noreferrer">Visit page ↗</a> · <a id="save-image" download>Save image</a></div>
 </div>
 
+  <script src="voice-input.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
