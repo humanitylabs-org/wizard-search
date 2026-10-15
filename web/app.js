@@ -110,6 +110,12 @@
   ['pointerup', 'pointercancel', 'scroll'].forEach(k => document.addEventListener(k, lpStop, { passive: true, capture: true }));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
+  WizardApp.ready({ name: 'Search', version: '1' });
+  WizardApp.back.useHistory({ isRoot: () => $('#lb').hidden && S.tab === 'all' });
+  WizardApp.back.register({
+    canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
+    back: () => { if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } return false; }
+  });
   const p = new URLSearchParams(location.search);
   if (p.get('q')) run(p.get('q'), p.get('tab') === 'images' ? 'images' : 'all');
   else setTimeout(() => $('#q').focus(), 50);
