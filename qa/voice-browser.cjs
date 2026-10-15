@@ -66,6 +66,15 @@ const server = http.createServer(async (req, res) => {
   await page.waitForFunction(() => document.querySelector('#voice-status').textContent === 'Voice query complete.');
   await send(page,m); assert.equal(calls.filter(x=>!x.includes('/config')).length, calls.slice(0,beforeReload).filter(x=>!x.includes('/config')).length);
   checks.push('reload restores durable results without duplicate search');
+  const interrupted={...m,request_id:'search_interrupt_1',text:'slow fixture'};
+  await send(page,interrupted);
+  await page.waitForTimeout(30);
+  await page.reload(); await page.waitForFunction(() => !!window.voiceReceiver);
+  await page.waitForFunction(() => document.querySelector('#voice-status').textContent.includes('interrupted'));
+  await send(page,interrupted);
+  assert.equal(calls.filter(x=>x.includes('q=slow%20fixture')).length,1);
+  assert.equal(await page.locator('#q').inputValue(),'slow fixture');
+  checks.push('interrupted admission survives reload without automatic retry');
   const p2 = await ctx.newPage(); await p2.goto(base); await p2.waitForFunction(() => !!window.voiceReceiver);
   const cross={...m,request_id:'search_cross_001',text:'cross frame fixture'};
   await Promise.all([send(page,cross),send(p2,cross)]);
