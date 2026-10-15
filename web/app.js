@@ -15,11 +15,11 @@
     history.replaceState(null, '', u);
     document.title = S.q ? `${S.q} · ${S.tab === 'images' ? 'Images' : 'Search'}` : 'Search';
   }
-  function tab(t) {
+  function tab(t, load = true) {
     S.tab = t;
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.t === t)));
     $('#empty').hidden = !!S.q; $('#all').hidden = !S.q || t !== 'all'; $('#images').hidden = !S.q || t !== 'images';
-    if (S.q) { setUrl(); ensure(); }
+    if (S.q) { setUrl(); if (load) ensure(); }
     window.scrollTo(0, 0);
   }
   function run(q, t) {
@@ -116,8 +116,48 @@
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
     back: () => { if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } return false; }
   });
+  const feedback = message => { $('#voice-status').hidden = !message; $('#voice-status').textContent = message; };
+  function voiceView(result) {
+    S.es?.close(); S.seq++; S.q = result.q;
+    // A voice query searches the frozen tab only. No additional inference or Chat call.
+    S.web = result.web || null; S.images = result.images || null;
+    S.ov = { answer: '', error: 'voice_query' };
+    $('#q').value = S.q; $('#clear').hidden = false; $('#lb').hidden = true;
+    $('#ov').innerHTML = '<p class="dim">Voice query · web results below.</p>';
+    $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '';
+    tab(result.tab, false); paintWeb(); paintImages();
+  }
+  const voice = window.SearchVoiceInput?.register({
+    state: () => ({ q: S.q, tab: S.tab, seq: S.seq, results: S.tab === 'images' ? S.images?.images : S.web?.results }),
+    feedback, restore: voiceView,
+    async search(q, target, authorize) {
+      authorize();
+      voiceView({ q, tab: target.tab });
+      const seq = S.seq, kind = target.tab === 'images' ? 'images' : 'web';
+      S[kind] = 'loading';
+      if (kind === 'images') $('#grid').innerHTML = '<p class="note">Finding images…</p>';
+      else $('#web').innerHTML = '<li class="note">Finding web results…</li>';
+      let data;
+      try {
+        data = await api(kind, q);
+        if (data.error) throw new Error(data.error);
+      } catch (error) {
+        if (seq === S.seq) {
+          S[kind] = { results: [], images: [], error: error.message };
+          if (kind === 'images') paintImages(); else paintWeb();
+        }
+        throw error;
+      }
+      const result = { q, tab: target.tab, [kind]: data };
+      if (seq === S.seq) { S[kind] = data; if (kind === 'images') paintImages(); else paintWeb(); }
+      return result;
+    }
+  });
   const p = new URLSearchParams(location.search);
-  if (p.get('q')) run(p.get('q'), p.get('tab') === 'images' ? 'images' : 'all');
-  else setTimeout(() => $('#q').focus(), 50);
+  if (p.get('q')) {
+    const q = p.get('q'), t = p.get('tab') === 'images' ? 'images' : 'all';
+    if (voice) voice.restoreQuery(q).then(restored => { if (!restored) run(q, t); }).catch(() => feedback('Voice storage unavailable. Type a query to search; previous voice requests will not be replayed.'));
+    else run(q, t);
+  } else setTimeout(() => $('#q').focus(), 50);
   window.WizardSearch = { run, tab, state: () => ({ q: S.q, tab: S.tab, images: S.images?.images?.length || 0, web: S.web?.results?.length || 0, overview: !!S.ov?.answer && !S.ov?.streaming, streaming: !!S.ov?.streaming }) };
 })();
