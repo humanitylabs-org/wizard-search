@@ -171,6 +171,6 @@
     const q = p.get('q'), t = p.get('tab') === 'images' ? 'images' : 'all';
     if (voice) voice.restoreQuery(q).then(restored => { if (!restored) run(q, t); }).catch(() => feedback('Voice storage unavailable. Type a query to search; previous voice requests will not be replayed.'));
     else run(q, t);
-  } else setTimeout(() => $('#q').focus(), 50);
+  } else setTimeout(() => { if (!window.WizardApp?.hosted) $('#q').focus(); }, 50); // Hosted orb defaults to Search; explicit field focus still dictates.
   window.WizardSearch = { run, tab, state: () => ({ q: S.q, tab: S.tab, images: S.images?.images?.length || 0, web: S.web?.results?.length || 0, overview: !!S.ov?.answer && !S.ov?.streaming, streaming: !!S.ov?.streaming }) };
 })();
