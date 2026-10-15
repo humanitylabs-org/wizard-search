@@ -17,6 +17,8 @@ main{padding:4px 12px 40px}
 .empty{text-align:center;color:var(--ink2);padding:60px 18px}
 .empty .orbish{font-size:44px;width:84px;height:84px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#c9b6ff,var(--v) 45%,#2b1a66);color:#fff}
 .dim{color:var(--ink3);font-size:13px}
+#setup{padding:14px;margin:8px 0;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow-wrap:anywhere}
+#setup p{margin:6px 0 0;font-size:13px}
 /* AI overview */
 .ov{background:linear-gradient(160deg,#1c1735,#141425 60%);border:1px solid #2f2752;border-radius:16px;padding:14px 14px 10px;margin:6px 0 14px}
 .ov h3{margin:0 0 8px;font-size:13px;letter-spacing:.02em;color:#cbb8ff;display:flex;align-items:center;gap:6px}

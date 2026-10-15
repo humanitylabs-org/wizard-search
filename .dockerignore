@@ -1,0 +1,9 @@
+*
+!server.py
+!setup.json
+!openapi.json
+!SETUP.md
+!web/
+!web/**
+!app/
+!app/Dockerfile

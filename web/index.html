@@ -1,12 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-app="wizard-search">
 <head>
+
+  <script src="/wizard-os-home/core/app-client.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b0b14">
 <meta name="referrer" content="no-referrer">
 <title>Search</title>
 <link rel="stylesheet" href="app.css">
+  <style>
+  :root[data-wz-hosted] {--bg:var(--wz-canvas); --card:var(--wz-surface); --line:var(--wz-border); --ink:var(--wz-text); --ink2:var(--wz-text-secondary); --ink3:var(--wz-text-muted); --link:var(--wz-accent);}
+  html[data-wz-hosted],html[data-wz-hosted] body {background:var(--wz-canvas);}
+  </style>
 </head>
 <body>
 <header class="top">
@@ -21,10 +27,11 @@
   </nav>
 </header>
 <main id="main">
+  <aside id="setup" role="status"><b id="setup-status">Checking provider configuration…</b><p><a href="SETUP.md" target="_blank">Setup instructions for your agent ↗</a> · <a href="setup.json" target="_blank">Machine-readable requirements ↗</a></p></aside>
   <section id="empty" class="empty">
     <div class="orbish">⌕</div>
     <p><b>Say “image search …” or “search …”</b> to the orb, or type above.</p>
-    <p class="dim">Private: no Google account, no tracking. Answers come from Archimedes’ private model.</p>
+    <p class="dim">No search history is saved by this service. Queries are sent to your configured search providers; AI overviews use your Tinfoil endpoint.</p>
   </section>
   <section id="all" hidden>
     <article id="ov" class="ov" aria-live="polite"></article>
@@ -38,8 +45,9 @@
 <div id="lb" class="lb" hidden>
   <button class="lb-x" data-lb="close" aria-label="Close">✕</button>
   <img alt="">
-  <div class="lb-cap"><b></b><a target="_blank" rel="noopener noreferrer">Visit page ↗</a></div>
+  <div class="lb-cap"><b></b><a target="_blank" rel="noopener noreferrer">Visit page ↗</a> · <a id="save-image" download>Save image</a></div>
 </div>
-<script src="app.js"></script>
+
+  <script src="app.js"></script>
 </body>
 </html>

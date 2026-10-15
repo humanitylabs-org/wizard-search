@@ -38,28 +38,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
-PREFIX = "/wizard-search"
+PREFIX = os.environ.get("WIZARD_SEARCH_BASE", "/wizard-search").rstrip("/")
 PORT = int(os.environ.get("WIZARD_SEARCH_PORT", "9288"))
-SOCKS = os.environ.get("WIZARD_SEARCH_SOCKS", "socks5h://127.0.0.1:18889")  # Thales residential egress
-LLM_URL = os.environ.get("TINFOIL_PROXY_URL", "http://127.0.0.1:3301/v1/chat/completions")
+SOCKS = os.environ.get("WIZARD_SEARCH_SOCKS", "")
+LLM_URL = os.environ.get("TINFOIL_PROXY_URL", "")
 LLM_MODEL = os.environ.get("WIZARD_SEARCH_MODEL", "gpt-oss-120b")
-FIRECRAWL_URL = os.environ.get("FIRECRAWL_ROUTER_URL", "http://127.0.0.1:3003/v2/search")
+FIRECRAWL_URL = os.environ.get("FIRECRAWL_ROUTER_URL", "")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 
-def _env_value(path: Path, key: str) -> str:
-    try:
-        for line in path.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    except OSError:
-        pass
-    return ""
-
-
-HOME = Path.home()
-TINFOIL_KEY = os.environ.get("TINFOIL_API_KEY") or _env_value(HOME / ".hermes/.env", "TINFOIL_API_KEY")
-BD_TOKEN = os.environ.get("BRIGHTDATA_API_TOKEN") or _env_value(HOME / ".config/firecrawl-hybrid-router.env", "BRIGHTDATA_API_TOKEN")
+TINFOIL_KEY = os.environ.get("TINFOIL_API_KEY", "")
+BD_TOKEN = os.environ.get("BRIGHTDATA_API_TOKEN", "")
 BD_SERP_ZONE = os.environ.get("BRIGHTDATA_SERP_ZONE", "serp_api1")
 BD_UNLOCK_ZONE = os.environ.get("BRIGHTDATA_UNLOCK_ZONE", "mcp_unlocker")
 
@@ -100,12 +89,17 @@ def norm_q(q: str) -> str:
 
 
 def curl(url: str, *, socks: bool, timeout: int = 15, binary: bool = False, max_bytes: int = 0):
+    if socks and not SOCKS:
+        raise RuntimeError("SOCKS egress is not configured")
     args = ["curl", "-s", "-L", "--max-redirs", "4", "-m", str(timeout), "-A", UA, "--compressed",
             "-H", "Accept-Language: en-US,en;q=0.9", "-w", "\n%{http_code} %{content_type}"]
     if socks:
         args += ["-x", SOCKS]
     if max_bytes:
         args += ["--max-filesize", str(max_bytes)]
+    if binary:
+        # Never follow an image publisher redirect into a private network.
+        args += ["--max-redirs", "0", "--proto", "=http,https"]
     args.append(url)
     p = subprocess.run(args, capture_output=True, timeout=timeout + 5)
     body, _, tail = p.stdout.rpartition(b"\n")
@@ -171,6 +165,8 @@ def image_search(q: str) -> dict:
         it["id"] = iid
         it["host"] = urllib.parse.urlsplit(it["page"] or it["full"]).hostname or ""
         it["host"] = re.sub(r"^www\.", "", it["host"])
+    if not items:
+        raise RuntimeError("image providers unavailable or returned no results")
     return {"q": q, "source": source, "images": items}
 
 
@@ -199,6 +195,8 @@ def _serp(q: str) -> list[dict]:
 
 
 def _local(q: str) -> list[dict]:
+    if not FIRECRAWL_URL:
+        raise RuntimeError("local Firecrawl router not configured")
     req = urllib.request.Request(FIRECRAWL_URL, data=json.dumps({"query": q, "limit": 8}).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:  # nosec B310 loopback
@@ -211,9 +209,26 @@ def _local(q: str) -> list[dict]:
 
 
 POOL = ThreadPoolExecutor(max_workers=24)
-FC_CLOUD_URL = (os.environ.get("FIRECRAWL_CLOUD_URL") or _env_value(HOME / ".config/firecrawl-hybrid-router.env", "FIRECRAWL_CLOUD_URL") or "https://api.firecrawl.dev").rstrip("/")
-FC_CLOUD_KEY = os.environ.get("FIRECRAWL_CLOUD_API_KEY") or _env_value(HOME / ".config/firecrawl-hybrid-router.env", "FIRECRAWL_CLOUD_API_KEY")
+FC_CLOUD_URL = os.environ.get("FIRECRAWL_CLOUD_URL", "https://api.firecrawl.dev").rstrip("/")
+FC_CLOUD_KEY = os.environ.get("FIRECRAWL_CLOUD_API_KEY", "")
 DDG_COOLDOWN = {"until": 0.0}
+
+
+def configuration() -> dict:
+    providers = {"socks": bool(SOCKS), "firecrawl_cloud": bool(FC_CLOUD_KEY),
+                 "brightdata": bool(BD_TOKEN), "firecrawl_router": bool(FIRECRAWL_URL),
+                 "tinfoil": bool(LLM_URL)}
+    web = any(providers[k] for k in ("socks", "firecrawl_cloud", "brightdata", "firecrawl_router"))
+    capabilities = {"web": web, "images": bool(SOCKS or BD_TOKEN), "overview": bool(web and LLM_URL)}
+    return {"state": "configured" if web else "setup_required", "capabilities": capabilities,
+            "providers": providers, "setup": "SETUP.md", "requirements": "setup.json",
+            "notice": "Configured means settings are present, not that providers are reachable."}
+
+
+def setup_error(capability: str) -> dict:
+    return {"error": "setup_required", "capability": capability,
+            "message": f"Configure {capability} providers using SETUP.md. No keys ship with Search.",
+            "configuration": configuration()}
 
 
 def _cloud(q: str) -> list[dict]:
@@ -234,7 +249,7 @@ def _cloud(q: str) -> list[dict]:
 def _ddg(q: str) -> list[dict]:
     """DuckDuckGo HTML through the Thales residential egress: ~1 s and free, but it challenges after a
     handful of queries, so it sits out for 10 minutes after any challenge."""
-    if time.time() < DDG_COOLDOWN["until"]:
+    if not SOCKS or time.time() < DDG_COOLDOWN["until"]:
         raise RuntimeError("ddg cooling down")
     out = subprocess.run(["curl", "-s", "-m", "4", "-x", SOCKS, "-A", UA, "-H", "Accept-Language: en-US,en;q=0.9",
                           "--data-urlencode", "q=" + q, "--data", "kl=us-en", "https://html.duckduckgo.com/html/"],
@@ -261,7 +276,7 @@ def web_search(q: str) -> dict:
     Google SERP (Bright Data, 2-40 s) and the local lane only join if both fast lanes fail."""
     started = time.time()
     futs = {}
-    if time.time() >= DDG_COOLDOWN["until"]:
+    if SOCKS and time.time() >= DDG_COOLDOWN["until"]:
         futs[POOL.submit(_ddg, q)] = "ddg"
     cloud_at = started + (1.2 if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
     cloud_started = slow_started = False
@@ -290,7 +305,7 @@ def web_search(q: str) -> dict:
             futs[POOL.submit(_serp, q)] = "serp"
             futs[POOL.submit(_local, q)] = "local"
             slow_started = True
-    return _finish(q, [], "")
+    raise RuntimeError("web providers unavailable or returned no results")
 
 
 def _finish(q: str, rows: list[dict], source: str) -> dict:
@@ -512,6 +527,8 @@ def public_host(url: str) -> bool:
 
 
 def fetch_image(url: str):
+    if not public_host(url):
+        return None
     for socks in (False, True):
         if not socks and not public_host(url):
             continue
@@ -526,6 +543,47 @@ def fetch_image(url: str):
 
 class H(BaseHTTPRequestHandler):
     server_version = "WizardSearch/1"
+
+    def _mcp(self, req):
+        if not isinstance(req, dict):
+            return self._json(400, {"error": "invalid request"})
+        rid, method = req.get("id"), req.get("method")
+        if "id" not in req:
+            return self._send(202, b"", "application/json")
+        tools = [{"name": "search_status", "description": "Read provider configuration (no secrets).", "inputSchema": {"type": "object", "properties": {}}}]
+        for kind in ("web", "images", "overview"):
+            tools.append({"name": "search_" + kind, "description": "Search " + kind + "; may consume configured provider credits.", "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
+        if method == "initialize":
+            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.1.0-test.1"}}
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = {"tools": tools}
+        elif method == "tools/call":
+            p = req.get("params") or {}
+            name = p.get("name")
+            error = False
+            if name == "search_status":
+                data = configuration()
+            elif name in ("search_web", "search_images", "search_overview"):
+                kind = name[7:]
+                raw = (p.get("arguments") or {}).get("q")
+                if not isinstance(raw, str) or not norm_q(raw):
+                    data, error = {"error": "q must be a nonempty string"}, True
+                elif not configuration()["capabilities"][kind]:
+                    data, error = setup_error(kind), True
+                else:
+                    cache, fn = {"web": (WEB_CACHE, web_search), "images": (IMG_CACHE, image_search), "overview": (OVR_CACHE, overview)}[kind]
+                    try:
+                        data = cached(cache, norm_q(raw), fn)
+                    except Exception:
+                        data, error = {"error": "provider_unavailable"}, True
+            else:
+                data, error = {"error": "unknown tool"}, True
+            result = {"content": [{"type": "text", "text": json.dumps(data)}], "isError": error}
+        else:
+            return self._json(200, {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "Method not found"}})
+        return self._json(200, {"jsonrpc": "2.0", "id": rid, "result": result})
 
     def log_message(self, fmt, *args):  # never log queries
         pass
@@ -556,7 +614,8 @@ class H(BaseHTTPRequestHandler):
         if not path.startswith(PREFIX + "/"):
             return self._json(404, {"error": "not found"})
         path = path[len(PREFIX):]
-        if self.headers.get("Sec-Fetch-Site", "") == "cross-site":
+        origin = self.headers.get("Origin", "")
+        if self.headers.get("Sec-Fetch-Site", "") == "cross-site" or (origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host", "")):
             return self._json(403, {"error": "cross_origin_request"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -566,6 +625,10 @@ class H(BaseHTTPRequestHandler):
             return self._json(413 if n > 0 else 400, {"error": "bad length"})
         body = self.rfile.read(n)
         try:
+            if path == "/mcp":
+                return self._mcp(json.loads(body))
+            if path in ("/api/translate", "/api/read-image") and not configuration()["capabilities"]["overview"]:
+                return self._json(503, setup_error("overview"))
             if path == "/api/translate":
                 j = json.loads(body)
                 items = j.get("items")
@@ -594,7 +657,15 @@ class H(BaseHTTPRequestHandler):
         q = norm_q((qs.get("q") or [""])[0])
         try:
             if path == "/api/health":
-                return self._json(200, {"ok": True, "model": LLM_MODEL, "bd": bool(BD_TOKEN), "tinfoil": bool(TINFOIL_KEY)})
+                return self._json(200, {"ok": True, "version": "0.1.0-test.1", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+            if path == "/api/config":
+                return self._json(200, configuration())
+            if path in ("/api/web", "/api/images", "/api/overview", "/api/overview-stream"):
+                capability = "overview" if "overview" in path else path.rsplit("/", 1)[1]
+                if not configuration()["capabilities"][capability]:
+                    return self._json(503, setup_error(capability))
+            if path in ("/setup.json", "/openapi.json", "/SETUP.md"):
+                return self._send(200, (ROOT / path.lstrip("/")).read_bytes(), "text/plain; charset=utf-8" if path.endswith(".md") else "application/json")
             if path in ("/api/images", "/api/web", "/api/overview"):
                 if not q:
                     return self._json(400, {"error": "empty query"})
@@ -619,7 +690,7 @@ class H(BaseHTTPRequestHandler):
                     elif got and not thumb and len(got[1]) < 6_000_000:
                         FULLS.put(m.group(2), got)
                 if not got:
-                    return self._send(302, b"", "text/plain", {"Location": src})
+                    return self._send(502, b"image unavailable", "text/plain")
                 extra = {"Cache-Control": "private, max-age=86400"}
                 if "dl" in qs:  # Save: a named attachment, so Android's download manager files it under that name
                     extra["Content-Disposition"] = attachment(qs["dl"][0], got[0])
@@ -663,6 +734,7 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ThreadingHTTPServer.daemon_threads = True
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
-    print(f"wizard-search on 127.0.0.1:{PORT}{PREFIX}/", flush=True)
+    bind = os.environ.get("WIZARD_SEARCH_BIND", "127.0.0.1")
+    srv = ThreadingHTTPServer((bind, PORT), H)
+    print(f"wizard-search on {bind}:{PORT}{PREFIX}/", flush=True)
     srv.serve_forever()

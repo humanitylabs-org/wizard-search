@@ -6,8 +6,16 @@
   const BASE = location.pathname.replace(/[^/]*$/, '');
   const api = (p, q) => fetch(`${BASE}api/${p}?q=${encodeURIComponent(q)}`, { credentials: 'same-origin' }).then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(new Error(j.error || r.status))));
   const S = { q: '', tab: 'all', images: null, web: null, ov: null, seq: 0 };
-  // Inside Wizard the shell's media viewer (fit, pinch, swipe, Back closes it) shows full images.
-  const shellViewer = () => { try { return window.parent !== window && window.parent.WosChat && window.parent.WosChat.viewer; } catch (e) { return null; } };
+  // Search owns its result viewer; shared Back owns the exit boundary.
+  const shellViewer = () => null;
+  const setupText = 'Setup required — configure this capability using the setup instructions above.';
+  const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
+    S.config = d;
+    const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
+    $('#setup-status').textContent = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
+    $('#setup').hidden = !missing.length;
+    return d;
+  }).catch(() => { $('#setup-status').textContent = 'Configuration check failed. Reload to retry.'; return null; });
 
   function setUrl() {
     const u = new URL(location.href); u.searchParams.set('q', S.q);
@@ -22,7 +30,8 @@
     if (S.q) { setUrl(); ensure(); }
     window.scrollTo(0, 0);
   }
-  function run(q, t) {
+  async function run(q, t) {
+    await configReady;
     q = String(q || '').trim(); if (!q) return;
     S.q = q; S.images = S.web = S.ov = null; S.seq++;
     $('#q').value = q; $('#clear').hidden = false; $('#q').blur();
@@ -38,6 +47,7 @@
   }
   // The overview streams: sources land first (~1-2 s), then the answer types in token by token.
   function streamOv(seq, q) {
+    if (!S.config?.capabilities.overview) { S.ov = {answer: '', error: 'setup_required'}; paintOv(); return; }
     S.ov = { answer: '', sources: [], streaming: true };
     let es;
     const fail = err => { if (seq !== S.seq) return; S.ov = { ...S.ov, streaming: false, error: S.ov.answer ? '' : err }; paintOv(); };
@@ -56,7 +66,7 @@
   function paintOv() {
     const d = S.ov, el = $('#ov');
     if (!d || d === 'loading' || (d.streaming && !d.answer)) { el.innerHTML = shimmer(); return; }
-    if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'no results' ? 'No sources found for an overview.' : 'Overview unavailable right now.'}</p>`; return; }
+    if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'setup_required' ? setupText : d.error === 'no results' ? 'No sources found for an overview.' : 'Overview unavailable right now.'}</p>`; return; }
     const src = Object.fromEntries((d.sources || []).map(s => [s.n, s]));
     const body = d.answer.replace(/【(\d+)[^】]*】/g, '[$1]').split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d+)\]/g, (m, n) => src[n] ? `<a class="cite" href="${esc(src[n].url)}" target="_blank" rel="noopener noreferrer" title="${esc(src[n].title)}">${n}</a>` : '')}</p>`).join('');
     const used = new Set([...d.answer.matchAll(/\[(\d+)\]/g)].map(m => +m[1]));
@@ -66,7 +76,7 @@
   function paintWeb() {
     const d = S.web, el = $('#web');
     if (!d || d === 'loading') return;
-    if (!d.results.length) { el.innerHTML = `<li class="note">${d.error ? 'Web results unavailable right now.' : 'No web results.'}</li>`; return; }
+    if (!d.results.length) { el.innerHTML = `<li class="note">${d.error === 'setup_required' ? setupText : d.error ? 'Web provider unavailable or returned no results. Check provider health and retry.' : 'No web results.'}</li>`; return; }
     el.innerHTML = d.results.map(r => `<li><div class="host"><img src="https://icons.duckduckgo.com/ip3/${esc(r.host)}.ico" alt="" loading="lazy" onerror="this.style.visibility='hidden'">${esc(r.host)}</div><a class="t" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a><p class="s">${esc(r.snippet)}</p></li>`).join('');
   }
   function paintImages() {
@@ -75,7 +85,7 @@
     $('#grid').innerHTML = list.length ? list.map((im, i) => {
       const ar = im.w && im.h ? ` style="aspect-ratio:${im.w}/${im.h}"` : '';
       return `<button class="tile" data-i="${i}"><span class="im"${ar}><img src="${BASE}thumb/${im.id}.jpg" alt="${esc(im.title)}" loading="lazy" referrerpolicy="no-referrer"></span><span class="cap"><b>${esc(im.host)}</b> · ${esc(im.title)}</span></button>`;
-    }).join('') : `<p class="note">${d.error ? 'Image search is unavailable right now.' : 'No images found.'}</p>`;
+    }).join('') : `<p class="note">${d.error === 'setup_required' ? setupText : d.error ? 'Image provider unavailable or returned no results. Check provider health and retry.' : 'No images found.'}</p>`;
     $('#strip').innerHTML = list.length ? list.slice(0, 8).map((im, i) => `<button data-i="${i}"><img src="${BASE}thumb/${im.id}.jpg" alt="${esc(im.title)}" loading="lazy"></button>`).join('') + '<button class="more" data-more>More images →</button>' : '';
   }
   function view(i, withMenu) {
@@ -86,6 +96,7 @@
     if (V && V.open(items, i)) { if (withMenu && V.menu) V.menu(); return; }
     const lb = $('#lb'); lb.hidden = false; lb.querySelector('img').src = items[i].url;
     lb.querySelector('b').textContent = im.title; const a = lb.querySelector('a'); a.href = im.page || im.full;
+    $('#save-image').href = items[i].download;
   }
 
   $('#f').addEventListener('submit', e => { e.preventDefault(); run($('#q').value); });
@@ -110,6 +121,13 @@
   ['pointerup', 'pointercancel', 'scroll'].forEach(k => document.addEventListener(k, lpStop, { passive: true, capture: true }));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
+  if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
+  WizardApp.ready({ name: 'Search', version: '0.1.0-test.1' });
+  WizardApp.back.useHistory({ isRoot: () => $('#lb').hidden && S.tab === 'all' });
+  WizardApp.back.register({
+    canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
+    back: () => { if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } return false; }
+  });
   const p = new URLSearchParams(location.search);
   if (p.get('q')) run(p.get('q'), p.get('tab') === 'images' ? 'images' : 'all');
   else setTimeout(() => $('#q').focus(), 50);

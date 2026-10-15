@@ -1,0 +1,30 @@
+services:
+  wizard-search:
+    image: ghcr.io/humanitylabs-org/wizard-search:0.1.0-test.1
+    user: '1000:1000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 512m
+    tmpfs: [/tmp]
+    environment:
+      WIZARD_SEARCH_BASE: ''
+      WIZARD_SEARCH_SOCKS: ${WIZARD_SEARCH_SOCKS:-}
+      FIRECRAWL_CLOUD_API_KEY: ${FIRECRAWL_CLOUD_API_KEY:-}
+      FIRECRAWL_CLOUD_URL: ${FIRECRAWL_CLOUD_URL:-https://api.firecrawl.dev}
+      FIRECRAWL_ROUTER_URL: ${FIRECRAWL_ROUTER_URL:-}
+      BRIGHTDATA_API_TOKEN: ${BRIGHTDATA_API_TOKEN:-}
+      BRIGHTDATA_SERP_ZONE: ${BRIGHTDATA_SERP_ZONE:-serp_api1}
+      BRIGHTDATA_UNLOCK_ZONE: ${BRIGHTDATA_UNLOCK_ZONE:-mcp_unlocker}
+      TINFOIL_PROXY_URL: ${TINFOIL_PROXY_URL:-}
+      TINFOIL_API_KEY: ${TINFOIL_API_KEY:-}
+      WIZARD_SEARCH_MODEL: ${WIZARD_SEARCH_MODEL:-gpt-oss-120b}
+      WIZARD_TRANSLATE_MODEL: ${WIZARD_TRANSLATE_MODEL:-gemma4-31b}
+      WIZARD_TRANSLATE_FALLBACK: ${WIZARD_TRANSLATE_FALLBACK:-gpt-oss-120b}
+      WIZARD_VISION_MODEL: ${WIZARD_VISION_MODEL:-gemma4-31b}
+    x-runtipi:
+      is_main: true
+      internal_port: 9288
+x-runtipi:
+  schema_version: 2
+  overrides: []

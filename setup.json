@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "app": "wizard-search",
+  "version": "0.1.0-test.1",
+  "runtime": {
+    "python": ">=3.12",
+    "commands": [
+      "curl"
+    ],
+    "port": 9288,
+    "container_base": "",
+    "gateway_shared_resources": [
+      "/wizard-os-home/core/app-client.js"
+    ],
+    "gateway_auth_required": true,
+    "persistent_data": false
+  },
+  "environment": {
+    "WIZARD_SEARCH_SOCKS": {
+      "description": "SOCKS egress URL",
+      "default": "",
+      "secret": false
+    },
+    "FIRECRAWL_CLOUD_API_KEY": {
+      "description": "Firecrawl Cloud API key",
+      "default": "",
+      "secret": true
+    },
+    "FIRECRAWL_CLOUD_URL": {
+      "description": "Firecrawl Cloud origin",
+      "default": "https://api.firecrawl.dev",
+      "secret": false
+    },
+    "FIRECRAWL_ROUTER_URL": {
+      "description": "Private Firecrawl router search endpoint",
+      "default": "",
+      "secret": false
+    },
+    "BRIGHTDATA_API_TOKEN": {
+      "description": "Bright Data API token",
+      "default": "",
+      "secret": true
+    },
+    "BRIGHTDATA_SERP_ZONE": {
+      "description": "Bright Data SERP zone",
+      "default": "serp_api1",
+      "secret": false
+    },
+    "BRIGHTDATA_UNLOCK_ZONE": {
+      "description": "Bright Data unlocker zone",
+      "default": "mcp_unlocker",
+      "secret": false
+    },
+    "TINFOIL_PROXY_URL": {
+      "description": "Tinfoil chat completions endpoint",
+      "default": "",
+      "secret": false
+    },
+    "TINFOIL_API_KEY": {
+      "description": "Tinfoil API key",
+      "default": "",
+      "secret": true
+    },
+    "WIZARD_SEARCH_MODEL": {
+      "description": "Overview model",
+      "default": "gpt-oss-120b",
+      "secret": false
+    },
+    "WIZARD_TRANSLATE_MODEL": {
+      "description": "Translation model",
+      "default": "gemma4-31b",
+      "secret": false
+    },
+    "WIZARD_TRANSLATE_FALLBACK": {
+      "description": "Translation fallback model",
+      "default": "gpt-oss-120b",
+      "secret": false
+    },
+    "WIZARD_VISION_MODEL": {
+      "description": "Vision model",
+      "default": "gemma4-31b",
+      "secret": false
+    }
+  },
+  "capabilities": {
+    "web": {
+      "any_of": [
+        "WIZARD_SEARCH_SOCKS",
+        "FIRECRAWL_CLOUD_API_KEY",
+        "BRIGHTDATA_API_TOKEN",
+        "FIRECRAWL_ROUTER_URL"
+      ]
+    },
+    "images": {
+      "any_of": [
+        "WIZARD_SEARCH_SOCKS",
+        "BRIGHTDATA_API_TOKEN"
+      ]
+    },
+    "overview": {
+      "requires_capability": "web",
+      "all_of": [
+        "TINFOIL_PROXY_URL"
+      ]
+    }
+  },
+  "checks": {
+    "config": "GET /api/config",
+    "health": "GET /api/health",
+    "real_search": "GET /api/web?q=Python%20programming%20language%20official%20documentation",
+    "mcp": "POST /mcp"
+  },
+  "configuration_changes": "Recreate container preserving private operator environment. No query history migration."
+}

@@ -1,0 +1,188 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Wizard Search",
+    "version": "0.1.0-test.1"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "health",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "summary": "config",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        }
+      }
+    },
+    "/api/web": {
+      "get": {
+        "summary": "web",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ]
+      }
+    },
+    "/api/images": {
+      "get": {
+        "summary": "images",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ]
+      }
+    },
+    "/api/overview": {
+      "get": {
+        "summary": "overview",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ]
+      }
+    },
+    "/api/overview-stream": {
+      "get": {
+        "summary": "overview-stream",
+        "responses": {
+          "200": {
+            "description": "Result (SSE for overview-stream)"
+          },
+          "503": {
+            "description": "setup_required"
+          },
+          "502": {
+            "description": "Provider unavailable or unusable response"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ]
+      }
+    },
+    "/mcp": {
+      "post": {
+        "summary": "/mcp",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "503": {
+            "description": "setup_required"
+          }
+        }
+      }
+    },
+    "/api/translate": {
+      "post": {
+        "summary": "/api/translate",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "503": {
+            "description": "setup_required"
+          }
+        }
+      }
+    },
+    "/api/read-image": {
+      "post": {
+        "summary": "/api/read-image",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "503": {
+            "description": "setup_required"
+          }
+        }
+      }
+    }
+  }
+}
