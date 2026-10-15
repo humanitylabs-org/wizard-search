@@ -14,6 +14,7 @@
     const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
     $('#setup-status').textContent = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
     $('#setup').hidden = !missing.length;
+    if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure /wizard-os-home/core/app-client.js at the gateway.'; }
     return d;
   }).catch(() => { $('#setup-status').textContent = 'Configuration check failed. Reload to retry.'; return null; });
 
@@ -123,7 +124,7 @@
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
   WizardApp.ready({ name: 'Search', version: '0.1.0-test.1' });
-  WizardApp.back.useHistory({ isRoot: () => $('#lb').hidden && S.tab === 'all' });
+
   WizardApp.back.register({
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
     back: () => { if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } return false; }
