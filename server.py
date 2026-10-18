@@ -380,8 +380,9 @@ TRANSLATE_FALLBACK = os.environ.get("WIZARD_TRANSLATE_FALLBACK", "gpt-oss-120b")
 VISION_MODEL = os.environ.get("WIZARD_VISION_MODEL", "gemma4-31b")
 TRANSLATE_SYSTEM = (
     "Translate each numbered item into natural %s as it would read in an app, on a menu or on a sign. "
-    "Keep numbers, prices, names, links and emoji. If an item is already %s, return it unchanged. "
-    "Reply with JSON only, no code fence: {\"from\": \"<source language(s)>\", \"items\": [\"...\"]} "
+    "Keep numbers, prices, names, links and emoji. Only an item already written in %s (or with no words to "
+    "translate) is returned unchanged; everything else is translated. Reply with JSON only, no code fence: "
+    "{\"items\": [{\"lang\": \"<language the ORIGINAL item is written in, named in English, e.g. Thai>\", \"text\": \"<translation>\"}]} "
     "with exactly one entry per input item, in the same order, without the item numbers.")
 READ_IMAGE_SYSTEM = (
     "Read all the text visible in this phone screenshot, top to bottom, left to right, exactly as written "
@@ -411,12 +412,22 @@ def _strip_num(s: str) -> str:
     return re.sub(r"^\s*\d{1,3}[.)]\s+", "", str(s)).strip()
 
 
+def _same(a: str, b: str) -> bool:
+    k = lambda x: re.sub(r"[\W_]+", "", x.casefold())
+    return k(a) == k(b)
+
+
 def translate_items(items: list[str], to: str = "English") -> dict:
-    """On-screen text → English, item by item (private Tinfoil inference). Cached per item."""
+    """On-screen text → `to`, item by item (private Tinfoil inference). Cached per item.
+
+    Each item also gets its language and whether it is foreign (not already `to`), so the orb's Translate screen
+    paints only the foreign text, the way Google Lens does, and names the language it found."""
     items = [re.sub(r"\s+", " ", str(x or "")).strip()[:1200] for x in items][:150]
-    out: list[str | None] = [TRANSLATE_CACHE.get(to + "\x00" + x) for x in items]
+    out: list = [TRANSLATE_CACHE.get(to + "\x01" + x) for x in items]
+    for i, x in enumerate(items):
+        if out[i] is None and not re.search(r"[^\W\d_]", x):  # no letters at all: nothing to translate
+            out[i] = {"text": x, "lang": ""}
     todo = [i for i, x in enumerate(items) if out[i] is None and x]
-    langs: set[str] = set()
     t0 = time.time()
     for start in range(0, len(todo), 40):
         chunk = todo[start:start + 40]
@@ -425,23 +436,40 @@ def translate_items(items: list[str], to: str = "English") -> dict:
         for model in (TRANSLATE_MODEL, TRANSLATE_FALLBACK):
             try:
                 j = _json_reply(_llm(model, [{"role": "system", "content": TRANSLATE_SYSTEM % (to, to)},
-                                             {"role": "user", "content": prompt}], 4000, 60))
-                tr = [_strip_num(s) for s in (j.get("items") or [])]
-                if len(tr) == len(chunk):
-                    got = tr
-                    f = j.get("from")
-                    for lang in (f if isinstance(f, list) else str(f or "").split(",")):
-                        if str(lang).strip():
-                            langs.add(str(lang).strip())
-                    break
+                                             {"role": "user", "content": prompt}], 6000, 60))
+                raw = j.get("items") or []
+                if len(raw) != len(chunk):
+                    continue
+                tr = []
+                for r in raw:
+                    if isinstance(r, dict):
+                        tr.append({"text": _strip_num(str(r.get("text") or "")), "lang": str(r.get("lang") or "").strip()[:30]})
+                    else:
+                        tr.append({"text": _strip_num(str(r)), "lang": ""})
+                got = tr
+                break
             except Exception:  # noqa: BLE001
                 continue
         if got is None:
             raise RuntimeError("translate failed")
         for i, t in zip(chunk, got):
             out[i] = t
-            TRANSLATE_CACHE.put(to + "\x00" + items[i], t)
-    return {"to": to, "from": ", ".join(sorted(langs)), "items": [o or "" for o in out], "ms": int((time.time() - t0) * 1000)}
+            TRANSLATE_CACHE.put(to + "\x01" + items[i], t)
+    texts, langs, foreign = [], [], []
+    for x, o in zip(items, out):
+        o = o or {"text": "", "lang": ""}
+        t, lang = o["text"] or x, o["lang"]
+        f = bool(x) and not _same(t, x) and lang.casefold() != to.casefold()
+        texts.append(t if f else x)
+        langs.append(lang)
+        foreign.append(f)
+    seen: dict[str, int] = {}
+    for lang, f in zip(langs, foreign):
+        if f and lang:
+            seen[lang] = seen.get(lang, 0) + 1
+    order = sorted(seen, key=lambda k: -seen[k])
+    return {"to": to, "from": ", ".join(order), "items": texts, "langs": langs, "foreign": foreign,
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def read_image(data: bytes, mime: str) -> dict:
