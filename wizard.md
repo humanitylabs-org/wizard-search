@@ -6,7 +6,7 @@ type: service
 category: app
 version: 0.1.0-test.1
 summary: Web and image search with optional cited Tinfoil overviews; operator-configured providers.
-license: LicenseRef-Proprietary
+license: MIT
 source: .
 receives_voice_input: true
 icon: web/icon.png
