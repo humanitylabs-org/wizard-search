@@ -123,7 +123,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.1.0-test.1' });
+  WizardApp.ready({ name: 'Search', version: '0.1.1' });
 
   WizardApp.back.register({
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
