@@ -4,7 +4,7 @@ id: wizard-search
 name: Search
 type: service
 category: app
-version: 0.1.0-test.1
+version: 0.1.1
 summary: Web and image search with optional cited Tinfoil overviews; operator-configured providers.
 license: LicenseRef-Proprietary
 source: .

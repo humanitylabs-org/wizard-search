@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "app": "wizard-search",
-  "version": "0.1.0-test.1",
+  "version": "0.1.1",
   "runtime": {
     "python": ">=3.12",
     "commands": [
