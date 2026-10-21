@@ -1,7 +1,8 @@
 services:
   wizard-search:
-    image: ghcr.io/humanitylabs-org/wizard-search:0.1.0-test.1
-    pull_policy: never
+    build:
+      context: .
+      dockerfile: app/Dockerfile
     user: '1000:1000'
     read_only: true
     cap_drop: [ALL]
