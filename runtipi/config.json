@@ -6,6 +6,7 @@
   "short_desc": "Search with your approved providers.",
   "description": "Private test: configure providers using the packaged SETUP.md. No credentials or history included.",
   "author": "Humanity Labs",
+  "source": "https://github.com/humanitylabs-org/wizard-search",
   "port": 9288,
   "categories": [
     "utilities"
