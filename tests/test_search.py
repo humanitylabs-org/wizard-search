@@ -98,6 +98,43 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual((parts.hostname, parts.port, parts.path), ('searx.invalid', 8080, '/search'))
                 self.assertEqual(urllib.parse.parse_qs(parts.query)['format'], ['json'])
 
+    def test_tinfoil_app_overview_switch(self):
+        import tempfile
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        good = 'x' * 40
+        class Fake(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def _j(self, code, obj):
+                b = json.dumps(obj).encode(); self.send_response(code); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b)
+            def do_GET(self):
+                if self.path == '/api/connection': return self._j(200, {'status': 'connected', 'credentialStored': True})
+                if self.path == '/v1/models':
+                    if self.headers.get('Authorization') != 'Bearer ' + good: return self._j(401, {'error': 'no'})
+                    return self._j(200, {'data': [{'id': 'gpt-oss-120b'}, {'id': 'kimi-k3'}]})
+                self._j(404, {})
+        fake = ThreadingHTTPServer(('127.0.0.1', 0), Fake); threading.Thread(target=fake.serve_forever, daemon=True).start()
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            with patch.object(s, 'TINFOIL_APP', 'http://127.0.0.1:%d' % fake.server_port), patch.object(s, 'DATA_DIR', Path(tmp.name)), patch.object(s, 'SEARXNG_URL', 'http://searx.invalid:8080'):
+                s.TINFOIL_PROBE['at'] = 0
+                _, d = self.request('/api/overview-provider')
+                self.assertEqual((d['mode'], d['tinfoil']), ('off', {'installed': True, 'connected': True}))
+                self.assertFalse(self.request('/api/config')[1]['capabilities']['overview'])
+                h = {'Content-Type': 'application/json', 'X-Wizard-Request': '1'}
+                self.assertEqual(self.request('/api/overview-provider', {'provider': 'tinfoil', 'token': good}, {'Content-Type': 'application/json'})[0], 403)
+                self.assertEqual(self.request('/api/overview-provider', {'provider': 'tinfoil', 'token': 'y' * 40}, h)[0], 502)
+                code, d = self.request('/api/overview-provider', {'provider': 'tinfoil', 'token': good, 'models': ['kimi-k3', 'evil'], 'recommended': ['kimi-k3']}, h)
+                self.assertEqual((code, d['mode'], d['model']), (200, 'tinfoil-app', 'kimi-k3'))
+                self.assertEqual((Path(tmp.name) / s.LINK_FILE).stat().st_mode & 0o777, 0o600)
+                self.assertTrue(self.request('/api/config')[1]['capabilities']['overview'])
+                self.assertNotIn(good, json.dumps(self.request('/api/config')[1]))
+                cfg = s.llm(); self.assertEqual(cfg['url'], 'http://127.0.0.1:%d/v1/chat/completions' % fake.server_port)
+                code, d = self.request('/api/overview-provider', {'provider': 'off'}, h)
+                self.assertEqual((code, d['mode']), (200, 'off'))
+                self.assertIsNone(s.llm())
+        finally:
+            fake.shutdown(); fake.server_close(); tmp.cleanup(); s.TINFOIL_PROBE['at'] = 0
+
     def test_provider_failure_not_empty_success(self):
         with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'):
             code, data = self.request('/api/web?q=provider-failure-test')

@@ -32,7 +32,11 @@
   <section id="empty" class="empty">
     <div class="orbish">⌕</div>
     <p><b>Say “image search …” or “search …”</b> to the orb, or type above.</p>
-    <p class="dim">No search history is saved by this service. Queries are sent to your configured search providers; AI overviews use your Tinfoil endpoint.</p>
+    <p class="dim">No search history is saved. Queries go to the search engines Search asks for you.</p>
+    <div id="ai" class="ai" hidden>
+      <span class="ai-main"><b>AI overviews</b><small id="ai-sub">A short private answer above your results, from Tinfoil.</small></span>
+      <button type="button" id="ai-btn" class="ai-btn">Turn on</button>
+    </div>
   </section>
   <section id="all" hidden>
     <article id="ov" class="ov" aria-live="polite"></article>

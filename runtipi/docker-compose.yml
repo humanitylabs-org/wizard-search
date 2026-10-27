@@ -9,8 +9,13 @@ services:
     security_opt: ['no-new-privileges:true']
     mem_limit: 512m
     tmpfs: [/tmp]
+    # Only the owner's AI-overview choice and Search's own Tinfoil token live here; no search history.
+    volumes:
+      - search-data:/data
     environment:
       WIZARD_SEARCH_BASE: ''
+      WIZARD_SEARCH_DATA: /data
+      WIZARD_SEARCH_TINFOIL_APP: ${WIZARD_SEARCH_TINFOIL_APP:-http://wizard-tinfoil:18804}
       SEARXNG_URL: ${SEARXNG_URL:-http://wizard-search-searxng:8080}
       WIZARD_SEARCH_SOCKS: ${WIZARD_SEARCH_SOCKS:-}
       FIRECRAWL_CLOUD_API_KEY: ${FIRECRAWL_CLOUD_API_KEY:-}
@@ -66,6 +71,8 @@ services:
           '    disabled: false' \
           > /etc/searxng/settings.yml
         exec /usr/local/searxng/entrypoint.sh
+volumes:
+  search-data: {}
 x-runtipi:
   schema_version: 2
   overrides: []

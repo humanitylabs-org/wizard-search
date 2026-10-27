@@ -20,6 +20,36 @@
     return d;
   }).catch(() => { $('#setup-status').textContent = 'Configuration check failed. Reload to retry.'; return null; });
 
+  // Optional AI overviews: only offered when the Tinfoil app is on this box. Turning on asks Tinfoil (sibling app,
+  // same origin, owner's page) for a Search-only token and hands it to Search's server; Turn off revokes it.
+  const TINFOIL = new URL('../wizard-tinfoil/', location.href).pathname;
+  const post = (url, body) => fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Wizard-Request': '1' }, body: JSON.stringify(body) })
+    .then(r => r.json().then(j => r.ok ? j : Promise.reject(new Error(j.error || r.status))));
+  function paintAi(p) {
+    const on = p.mode !== 'off', t = p.tinfoil || {};
+    $('#ai').hidden = !(on || t.installed);
+    $('#ai-btn').hidden = p.mode === 'proxy' || (!on && !t.connected);
+    $('#ai-btn').textContent = on ? 'Turn off' : 'Turn on';
+    $('#ai-btn').setAttribute('aria-pressed', String(on));
+    $('#ai-sub').textContent = p.mode === 'proxy' ? 'On · set up by your server admin.' : on ? `On · private answers from Tinfoil (${p.model}).`
+      : t.connected ? 'A short private answer above your results, from Tinfoil. Uses your Tinfoil credit.' : 'Connect Tinfoil in the Tinfoil app first, then turn this on here.';
+    if (S.config) { S.config.capabilities.overview = on && S.config.state !== 'setup_required'; $('#ov').hidden = !S.config.capabilities.overview; }
+  }
+  const aiReady = configReady.then(() => fetch(`${BASE}api/overview-provider`).then(r => r.json())).then(paintAi).catch(() => {});
+  $('#ai-btn').addEventListener('click', async () => {
+    const b = $('#ai-btn'), on = b.getAttribute('aria-pressed') === 'true'; b.disabled = true;
+    try {
+      if (on) {
+        paintAi(await post(`${BASE}api/overview-provider`, { provider: 'off' }));
+        post(`${TINFOIL}api/app-tokens/remove`, { app: 'wizard-search' }).catch(() => {});
+      } else {
+        const g = await post(`${TINFOIL}api/app-tokens`, { app: 'wizard-search' });
+        paintAi(await post(`${BASE}api/overview-provider`, { provider: 'tinfoil', token: g.token, models: g.models, recommended: g.recommended }));
+      }
+    } catch (e) { $('#ai-sub').textContent = `Could not change AI overviews (${e.message}). Check the Tinfoil app and try again.`; }
+    finally { b.disabled = false; }
+  });
+
   function setUrl() {
     const u = new URL(location.href); u.searchParams.set('q', S.q);
     if (S.tab === 'images') u.searchParams.set('tab', 'images'); else u.searchParams.delete('tab');
@@ -125,7 +155,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.2.0' });
+  WizardApp.ready({ name: 'Search', version: '0.3.0' });
 
   WizardApp.back.register({
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',

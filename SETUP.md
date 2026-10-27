@@ -65,7 +65,16 @@ Web races the free lanes first (SearXNG, plus DDG when SOCKS is set); Firecrawl 
 3 s head start (1.2 s without SearXNG), then Bright Data/local-router fallbacks. Paid lanes therefore
 rarely spend credits. Images try SearXNG, then Bing through SOCKS, then Bright Data unlocker.
 
-## Optional inference
+## Optional AI overviews with the Tinfoil app (owner switch, no setup)
+
+When the Tinfoil app is installed and connected on the same box, the Search start screen shows an
+"AI overviews" switch. Turn on asks Tinfoil (same-origin owner page, `POST ../wizard-tinfoil/api/app-tokens`)
+for a Search-only box token, and Search keeps it 0600 in its `search-data` volume. Search never sees the
+Tinfoil API key. Turn off (or Remove on the Tinfoil page) revokes it. Boxes without Tinfoil see no switch.
+`WIZARD_SEARCH_TINFOIL_APP` (default `http://wizard-tinfoil:18804`) names the peer. Overviews spend the
+owner's Tinfoil credit. An operator `TINFOIL_PROXY_URL` (below) takes precedence over the switch.
+
+## Optional inference (operator proxy)
 
 `TINFOIL_PROXY_URL` is the COMPLETE reachable Tinfoil proxy chat endpoint ending in
 `/v1/chat/completions`; optional `TINFOIL_API_KEY` is sent as Bearer auth. Use the recipient's
