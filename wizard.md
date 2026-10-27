@@ -4,8 +4,8 @@ id: wizard-search
 name: Search
 type: service
 category: app
-version: 0.1.0-test.1
-summary: Web and image search with optional cited Tinfoil overviews; operator-configured providers.
+version: 0.2.0
+summary: Free private web and image search out of the box (bundled SearXNG); optional paid lanes and cited Tinfoil overviews.
 license: MIT
 source: .
 receives_voice_input: true
@@ -38,10 +38,11 @@ needs: []
 health: /api/health
 ---
 
-# Search — private test release
+# Search
 
-No credentials or history are bundled. Start empty, then configure existing providers with
-SETUP.md and setup.json. Wizard gateway supplies the shared app client and authenticated
+Works on install: a bundled SearXNG sidecar (free, no account, AGPL-3.0 upstream image, private to
+this app) answers web and image searches. No credentials or history are bundled. Optional paid
+lanes and Tinfoil overviews are configured with SETUP.md and setup.json. Wizard gateway supplies the shared app client and authenticated
 routing. This is not a new Connections implementation. Runtime dependencies are explicit
 operator settings rather than fictitious installable Wizard app IDs.
 

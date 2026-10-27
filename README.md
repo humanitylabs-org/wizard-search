@@ -1,6 +1,9 @@
-# Wizard Search — private test package
+# Wizard Search
 
-Existing Search, packaged without owner keys, history or automatic home-directory configuration.
+Private web and image search that works on install. The Compose file runs an unmodified, digest-pinned
+SearXNG metasearch sidecar (AGPL-3.0, https://github.com/searxng/searxng) on the app network only; it
+needs no account or key and gets a fresh random secret on every start. Packaged without owner keys,
+history or automatic home-directory configuration.
 See [SETUP.md](SETUP.md) for operator setup, [setup.json](setup.json) for machine-readable
 requirements, [openapi.json](openapi.json) and [skill/SKILL.md](skill/SKILL.md) for agent use.
 Python 3.12+ standard library and curl; no Python packages. Wizard supplies the shared client,

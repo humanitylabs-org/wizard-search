@@ -44,6 +44,8 @@ SOCKS = os.environ.get("WIZARD_SEARCH_SOCKS", "")
 LLM_URL = os.environ.get("TINFOIL_PROXY_URL", "")
 LLM_MODEL = os.environ.get("WIZARD_SEARCH_MODEL", "gpt-oss-120b")
 FIRECRAWL_URL = os.environ.get("FIRECRAWL_ROUTER_URL", "")
+# Free, keyless default: the SearXNG metasearch sidecar that ships in this app's Compose file.
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "").rstrip("/")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 
@@ -140,17 +142,65 @@ def parse_bing_images(page: str) -> list[dict]:
     return out
 
 
+def _searx(q: str, category: str = "general") -> list[dict]:
+    """Bundled SearXNG sidecar: free, no account, fans out to several public engines at once."""
+    if not SEARXNG_URL:
+        raise RuntimeError("searxng not configured")
+    qs = urllib.parse.urlencode({"q": q, "format": "json", "categories": category, "language": "en", "safesearch": 1})
+    req = urllib.request.Request(SEARXNG_URL + "/search?" + qs, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:  # nosec B310 private sidecar
+        d = json.load(r)
+    return [x for x in d.get("results") or [] if str(x.get("url", "")).startswith(("http://", "https://"))]
+
+
+def _searx_web(q: str) -> list[dict]:
+    rows = [{"url": x["url"], "title": x.get("title") or x["url"], "snippet": x.get("content") or ""} for x in _searx(q)]
+    if not rows:
+        raise RuntimeError("empty searxng")
+    return rows
+
+
+def _searx_images(q: str) -> list[dict]:
+    out, seen = [], set()
+    for x in _searx(q, "images"):
+        full = x.get("img_src") or ""
+        if full.startswith("//"):
+            full = "https:" + full
+        if not full.startswith(("http://", "https://")) or full in seen:
+            continue
+        seen.add(full)
+        thumb = x.get("thumbnail_src") or ""
+        if thumb.startswith("//"):
+            thumb = "https:" + thumb
+        item = {"full": full, "thumb": thumb if thumb.startswith(("http://", "https://")) else full,
+                "title": x.get("title") or "", "page": x.get("url") or full, "desc": x.get("content") or ""}
+        dm = re.match(r"\s*(\d+)\s*[x×]\s*(\d+)", str(x.get("resolution") or ""))
+        if dm:
+            item["w"], item["h"] = int(dm.group(1)), int(dm.group(2))
+        out.append(item)
+        if len(out) >= 60:
+            break
+    return out
+
+
 def image_search(q: str) -> dict:
     qs = urllib.parse.urlencode({"q": q, "first": 1, "count": 60, "mmasync": 1, "setlang": "en-US", "adlt": "moderate"})
     url = "https://www.bing.com/images/async?" + qs
     items, source = [], ""
-    try:
-        code, _, page = curl(url, socks=True, timeout=12)
-        if code == 200:
-            items, source = parse_bing_images(page), "bing"
-    except Exception:
-        pass
-    if len(items) < 6:
+    if SEARXNG_URL:
+        try:
+            items, source = _searx_images(q), "searxng"
+        except Exception:
+            pass
+    if len(items) < 6 and SOCKS:
+        try:
+            code, _, page = curl(url, socks=True, timeout=12)
+            more = parse_bing_images(page) if code == 200 else []
+            if len(more) > len(items):
+                items, source = more, "bing"
+        except Exception:
+            pass
+    if len(items) < 6 and BD_TOKEN:
         try:
             page = bd_request({"zone": BD_UNLOCK_ZONE, "url": url, "format": "raw"}, timeout=30).decode("utf8", "replace")
             more = parse_bing_images(page)
@@ -217,11 +267,11 @@ DDG_COOLDOWN = {"until": 0.0}
 
 
 def configuration() -> dict:
-    providers = {"socks": bool(SOCKS), "firecrawl_cloud": bool(FC_CLOUD_KEY),
+    providers = {"searxng": bool(SEARXNG_URL), "socks": bool(SOCKS), "firecrawl_cloud": bool(FC_CLOUD_KEY),
                  "brightdata": bool(BD_TOKEN), "firecrawl_router": bool(FIRECRAWL_URL),
                  "tinfoil": bool(LLM_URL)}
-    web = any(providers[k] for k in ("socks", "firecrawl_cloud", "brightdata", "firecrawl_router"))
-    capabilities = {"web": web, "images": bool(SOCKS or BD_TOKEN), "overview": bool(web and LLM_URL)}
+    web = any(providers[k] for k in ("searxng", "socks", "firecrawl_cloud", "brightdata", "firecrawl_router"))
+    capabilities = {"web": web, "images": bool(SEARXNG_URL or SOCKS or BD_TOKEN), "overview": bool(web and LLM_URL)}
     return {"state": "configured" if web else "setup_required", "capabilities": capabilities,
             "providers": providers, "setup": "SETUP.md", "requirements": "setup.json",
             "notice": "Configured means settings are present, not that providers are reachable."}
@@ -278,17 +328,23 @@ def web_search(q: str) -> dict:
     Google SERP (Bright Data, 2-40 s) and the local lane only join if both fast lanes fail."""
     started = time.time()
     futs = {}
+    if SEARXNG_URL:
+        futs[POOL.submit(_searx_web, q)] = "searxng"
     if SOCKS and time.time() >= DDG_COOLDOWN["until"]:
         futs[POOL.submit(_ddg, q)] = "ddg"
-    cloud_at = started + (1.2 if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
+    # Free lanes get a head start; a paid lane (if any) only joins when they stall.
+    cloud_at = started + ((3.0 if SEARXNG_URL else 1.2) if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
     cloud_started = slow_started = False
     while time.time() - started < 30:
         if not cloud_started and (time.time() >= cloud_at or not futs):
-            futs[POOL.submit(_cloud, q)] = "cloud"
+            if FC_CLOUD_KEY:
+                futs[POOL.submit(_cloud, q)] = "cloud"
             cloud_started = True
         if not futs and not slow_started:
-            futs[POOL.submit(_serp, q)] = "serp"
-            futs[POOL.submit(_local, q)] = "local"
+            if BD_TOKEN:
+                futs[POOL.submit(_serp, q)] = "serp"
+            if FIRECRAWL_URL:
+                futs[POOL.submit(_local, q)] = "local"
             slow_started = True
         if not futs:
             break
@@ -299,13 +355,15 @@ def web_search(q: str) -> dict:
                 rows = f.result()
             except Exception:
                 continue
-            if lane in ("ddg", "local") and not _relevant(q, rows):
+            if lane in ("searxng", "ddg", "local") and not _relevant(q, rows):
                 continue
             return _finish(q, rows, lane)
-        fast_left = not cloud_started or any(v in ("ddg", "cloud") for v in futs.values())
+        fast_left = not cloud_started or any(v in ("searxng", "ddg", "cloud") for v in futs.values())
         if not slow_started and (not fast_left or time.time() - started > 6):
-            futs[POOL.submit(_serp, q)] = "serp"
-            futs[POOL.submit(_local, q)] = "local"
+            if BD_TOKEN:
+                futs[POOL.submit(_serp, q)] = "serp"
+            if FIRECRAWL_URL:
+                futs[POOL.submit(_local, q)] = "local"
             slow_started = True
     raise RuntimeError("web providers unavailable or returned no results")
 
@@ -560,7 +618,7 @@ class H(BaseHTTPRequestHandler):
         for kind in ("web", "images", "overview"):
             tools.append({"name": "search_" + kind, "description": "Search " + kind + "; may consume configured provider credits.", "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
         if method == "initialize":
-            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.1.0-test.1"}}
+            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.2.0"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -663,7 +721,7 @@ class H(BaseHTTPRequestHandler):
         q = norm_q((qs.get("q") or [""])[0])
         try:
             if path == "/api/health":
-                return self._json(200, {"ok": True, "version": "0.1.0-test.1", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+                return self._json(200, {"ok": True, "version": "0.2.0", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
             if path == "/api/config":
                 return self._json(200, configuration())
             if path in ("/api/web", "/api/images", "/api/overview", "/api/overview-stream"):

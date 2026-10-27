@@ -3,8 +3,8 @@
   "name": "Search",
   "wizard_type": "service",
   "available": true,
-  "short_desc": "Search with your approved providers.",
-  "description": "Private test: configure providers using the packaged SETUP.md. No credentials or history included.",
+  "short_desc": "Free private web and image search, ready out of the box.",
+  "description": "Search works on install with a bundled SearXNG metasearch engine (free, no account). Optionally add Firecrawl, Bright Data or a SOCKS egress for extra lanes, and a Tinfoil endpoint for AI overviews. No history is saved.",
   "author": "Humanity Labs",
   "source": "https://github.com/humanitylabs-org/wizard-search",
   "port": 9288,
@@ -12,7 +12,7 @@
     "utilities"
   ],
   "tipi_version": 1,
-  "version": "0.1.0-test.1",
+  "version": "0.2.0",
   "exposable": false,
   "supported_architectures": [
     "amd64",
@@ -24,6 +24,13 @@
   "gid": 1000,
   "no_gui": false,
   "form_fields": [
+    {
+      "type": "text",
+      "label": "SearXNG endpoint (default: bundled; clear to disable)",
+      "env_variable": "SEARXNG_URL",
+      "required": false,
+      "default": "http://wizard-search-searxng:8080"
+    },
     {
       "type": "text",
       "label": "SOCKS egress URL",

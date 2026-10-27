@@ -17,7 +17,7 @@ spec.loader.exec_module(s)
 class SearchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.env = patch.multiple(s, SOCKS='', LLM_URL='', TINFOIL_KEY='', BD_TOKEN='', FC_CLOUD_KEY='', FIRECRAWL_URL='', PREFIX='')
+        cls.env = patch.multiple(s, SEARXNG_URL='', SOCKS='', LLM_URL='', TINFOIL_KEY='', BD_TOKEN='', FC_CLOUD_KEY='', FIRECRAWL_URL='', PREFIX='')
         cls.env.start()
         cls.server = s.ThreadingHTTPServer(('127.0.0.1', 0), s.H)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -57,6 +57,40 @@ class SearchTests(unittest.TestCase):
             self.assertTrue(data['capabilities']['web'])
             self.assertFalse(data['capabilities']['images'])
             self.assertNotIn('dummy-secret', json.dumps(data))
+
+    def test_searxng_default_web_and_images(self):
+        fake = {'results': [
+            {'url': 'https://example.org/a', 'title': 'Alpha receipt printer', 'content': 'receipt printer alpha',
+             'img_src': 'https://img.example.org/a.jpg', 'thumbnail_src': '//img.example.org/a_t.jpg', 'resolution': '800 x 600'},
+            {'url': 'https://example.org/b', 'title': 'Beta receipt printer', 'content': 'receipt printer beta',
+             'img_src': 'https://img.example.org/b.jpg'},
+            {'url': 'javascript:alert(1)', 'title': 'bad'}]}
+
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(fake).encode()
+        seen = []
+        real_open = urllib.request.urlopen
+        def fake_open(req, timeout=0):
+            url = getattr(req, 'full_url', req)
+            if not str(url).startswith('http://searx.invalid'):
+                return real_open(req, timeout=timeout)
+            seen.append(url)
+            return R()
+        with patch.object(s, 'SEARXNG_URL', 'http://searx.invalid:8080'), patch.object(s.urllib.request, 'urlopen', fake_open):
+            code, data = self.request('/api/config')
+            self.assertEqual(data['state'], 'configured')
+            self.assertTrue(data['capabilities']['web'] and data['capabilities']['images'])
+            self.assertFalse(data['capabilities']['overview'])
+            code, data = self.request('/api/web?q=receipt+printer+searx+test')
+            self.assertEqual((code, data['source']), (200, 'searxng'))
+            self.assertEqual([r['url'] for r in data['results']], ['https://example.org/a', 'https://example.org/b'])
+            code, data = self.request('/api/images?q=receipt+printer+searx+images')
+            self.assertEqual((code, data['source']), (200, 'searxng'))
+            self.assertEqual(data['images'][0]['thumb'], 'https://img.example.org/a_t.jpg')
+            self.assertEqual((data['images'][0]['w'], data['images'][0]['h']), (800, 600))
+            self.assertTrue(all('format=json' in u and u.startswith('http://searx.invalid:8080/search?') for u in seen))
 
     def test_provider_failure_not_empty_success(self):
         with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'):
