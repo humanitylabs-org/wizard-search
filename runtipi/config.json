@@ -4,7 +4,7 @@
   "wizard_type": "service",
   "available": true,
   "short_desc": "Free private web and image search, ready out of the box.",
-  "description": "Search works on install with a bundled SearXNG metasearch engine (free, no account). Optionally add Firecrawl, Bright Data or a SOCKS egress for extra lanes, and a Tinfoil endpoint for AI overviews. No history is saved.",
+  "description": "Search works on install with a bundled SearXNG metasearch engine (free, no account). Have the Tinfoil app? Turn on private AI overviews from the Search page. Optionally add Firecrawl, Bright Data or a SOCKS egress for extra lanes. No history is saved.",
   "author": "Humanity Labs",
   "source": "https://github.com/humanitylabs-org/wizard-search",
   "port": 9288,
@@ -12,7 +12,7 @@
     "utilities"
   ],
   "tipi_version": 1,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "exposable": false,
   "supported_architectures": [
     "amd64",

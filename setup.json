@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "app": "wizard-search",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "runtime": {
     "python": ">=3.12",
     "commands": [
@@ -13,7 +13,7 @@
       "/wizard-os-home/core/app-client.js"
     ],
     "gateway_auth_required": true,
-    "persistent_data": false
+    "persistent_data": true
   },
   "environment": {
     "SEARXNG_URL": {
@@ -84,6 +84,11 @@
     "WIZARD_VISION_MODEL": {
       "description": "Vision model",
       "default": "gemma4-31b",
+      "secret": false
+    },
+    "WIZARD_SEARCH_TINFOIL_APP": {
+      "description": "Tinfoil app on this box, used when the owner turns on AI overviews in Search",
+      "default": "http://wizard-tinfoil:18804",
       "secret": false
     }
   },

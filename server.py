@@ -50,6 +50,111 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 
 TINFOIL_KEY = os.environ.get("TINFOIL_API_KEY", "")
+# Optional AI overviews through the Tinfoil app on this box: the owner turns them on from Search's page, Tinfoil
+# issues Search its own box-only token, and Search keeps it in DATA_DIR (0600). TINFOIL_PROXY_URL (operator
+# setting) still wins when set. Search never sees the Tinfoil API key.
+DATA_DIR = Path(os.environ.get("WIZARD_SEARCH_DATA", "/data"))
+TINFOIL_APP = os.environ.get("WIZARD_SEARCH_TINFOIL_APP", "http://wizard-tinfoil:18804").rstrip("/")
+LINK_FILE = "overview-provider.json"
+
+
+def _link() -> dict | None:
+    try:
+        d = json.loads((DATA_DIR / LINK_FILE).read_text())
+        return d if d.get("provider") == "tinfoil" and d.get("token") else None
+    except (OSError, ValueError):
+        return None
+
+
+def _pick(models: list, *want: str) -> str:
+    for m in want:
+        if m in models:
+            return m
+    return models[0] if models else want[0]
+
+
+def llm() -> dict | None:
+    """Where AI calls go right now: the operator's proxy, the linked Tinfoil app, or nowhere."""
+    if LLM_URL:
+        return {"via": "proxy", "url": LLM_URL, "key": TINFOIL_KEY, "model": LLM_MODEL, "translate": TRANSLATE_MODEL,
+                "fallback": TRANSLATE_FALLBACK, "vision": VISION_MODEL}
+    link = _link()
+    if not link:
+        return None
+    models = link.get("models") or []
+    main = _pick(models, LLM_MODEL, *(link.get("recommended") or []))
+    return {"via": "tinfoil-app", "url": TINFOIL_APP + "/v1/chat/completions", "key": link["token"], "model": main,
+            "translate": _pick(models, TRANSLATE_MODEL, main), "fallback": _pick(models, TRANSLATE_FALLBACK, main),
+            "vision": _pick(models, VISION_MODEL, main)}
+
+
+TINFOIL_PROBE = {"at": 0.0, "data": None}
+
+
+def tinfoil_app_status(force: bool = False) -> dict:
+    """Is the Tinfoil app installed and connected on this box? Cached ~90 s; never raises."""
+    if not force and time.time() - TINFOIL_PROBE["at"] < 90 and TINFOIL_PROBE["data"] is not None:
+        return TINFOIL_PROBE["data"]
+    out = {"installed": False, "connected": False}
+    try:
+        with urllib.request.urlopen(TINFOIL_APP + "/api/connection", timeout=2) as r:  # nosec B310 box-only peer
+            d = json.load(r)
+        out = {"installed": True, "connected": d.get("status") == "connected" or bool(d.get("credentialStored"))}
+    except Exception:
+        pass
+    link = _link()
+    if link and out["installed"]:
+        # Removed on the Tinfoil page: drop the dead link so the switch shows Off instead of failing answers.
+        try:
+            urllib.request.urlopen(urllib.request.Request(TINFOIL_APP + "/v1/models", headers={"Authorization": "Bearer " + link["token"]}), timeout=3).close()  # nosec B310
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                unlink_tinfoil_file()
+        except Exception:
+            pass
+    TINFOIL_PROBE.update(at=time.time(), data=out)
+    return out
+
+
+def overview_provider() -> dict:
+    cfg = llm()
+    return {"mode": cfg["via"] if cfg else "off", "model": cfg["model"] if cfg else None,
+            "tinfoil": tinfoil_app_status()}
+
+
+def link_tinfoil(token: str, models: list, recommended: list) -> dict:
+    """Check the token Tinfoil just issued by listing models through it, then keep it (0600)."""
+    if not isinstance(token, str) or not 20 <= len(token) <= 200 or not token.isascii():
+        raise ValueError("bad token")
+    req = urllib.request.Request(TINFOIL_APP + "/v1/models", headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=8) as r:  # nosec B310 box-only peer
+        live = [m.get("id") for m in json.load(r).get("data") or [] if isinstance(m, dict)]
+    clean = lambda xs: [m for m in xs if isinstance(m, str) and m in live][:40]
+    models = clean(models) or live
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = DATA_DIR / (LINK_FILE + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"provider": "tinfoil", "token": token, "models": models, "recommended": clean(recommended),
+                   "linkedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+    os.replace(tmp, DATA_DIR / LINK_FILE)
+    with OVR_CACHE.lock:
+        OVR_CACHE.d.clear()
+    TINFOIL_PROBE["at"] = 0.0
+    return overview_provider()
+
+
+def unlink_tinfoil_file() -> None:
+    try:
+        (DATA_DIR / LINK_FILE).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def unlink_tinfoil() -> dict:
+    unlink_tinfoil_file()
+    TINFOIL_PROBE["at"] = 0.0
+    return overview_provider()
 BD_TOKEN = os.environ.get("BRIGHTDATA_API_TOKEN", "")
 BD_SERP_ZONE = os.environ.get("BRIGHTDATA_SERP_ZONE", "serp_api1")
 BD_UNLOCK_ZONE = os.environ.get("BRIGHTDATA_UNLOCK_ZONE", "mcp_unlocker")
@@ -270,9 +375,9 @@ DDG_COOLDOWN = {"until": 0.0}
 def configuration() -> dict:
     providers = {"searxng": bool(SEARXNG_URL), "socks": bool(SOCKS), "firecrawl_cloud": bool(FC_CLOUD_KEY),
                  "brightdata": bool(BD_TOKEN), "firecrawl_router": bool(FIRECRAWL_URL),
-                 "tinfoil": bool(LLM_URL)}
+                 "tinfoil": bool(llm())}
     web = any(providers[k] for k in ("searxng", "socks", "firecrawl_cloud", "brightdata", "firecrawl_router"))
-    capabilities = {"web": web, "images": bool(SEARXNG_URL or SOCKS or BD_TOKEN), "overview": bool(web and LLM_URL)}
+    capabilities = {"web": web, "images": bool(SEARXNG_URL or SOCKS or BD_TOKEN), "overview": bool(web and llm())}
     return {"state": "configured" if web else "setup_required", "capabilities": capabilities,
             "providers": providers, "setup": "SETUP.md", "requirements": "setup.json",
             "notice": "Configured means settings are present, not that providers are reachable."}
@@ -390,13 +495,14 @@ If the sources do not answer it, say so in one sentence. Today is %s."""
 
 def _overview_request(q: str, rows: list[dict], stream: bool) -> urllib.request.Request:
     ctx = "\n".join(f"[{i}] {r['title']} ({r['host']}): {r['snippet']}" for i, r in enumerate(rows, 1))
+    cfg = llm() or {}
     body = {
-        "model": LLM_MODEL, "max_tokens": 700, "temperature": 0.2, "reasoning_effort": "low", "stream": stream,
+        "model": cfg.get("model", LLM_MODEL), "max_tokens": 700, "temperature": 0.2, "reasoning_effort": "low", "stream": stream,
         "messages": [{"role": "system", "content": OVERVIEW_SYSTEM % time.strftime("%Y-%m-%d")},
                      {"role": "user", "content": f"Query: {q}\n\nSources:\n{ctx}"}],
     }
-    return urllib.request.Request(LLM_URL, data=json.dumps(body).encode(),
-                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + TINFOIL_KEY})
+    return urllib.request.Request(cfg.get("url", ""), data=json.dumps(body).encode(),
+                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg.get("key", "")})
 
 
 def _sources(rows: list[dict]) -> list[dict]:
@@ -416,7 +522,7 @@ def overview(q: str) -> dict:
     with urllib.request.urlopen(_overview_request(q, rows, False), timeout=40) as r:  # nosec B310 loopback
         d = json.load(r)
     answer = _fix_cites((d["choices"][0]["message"].get("content") or "").strip())
-    return {"q": q, "answer": answer, "sources": _sources(rows), "model": LLM_MODEL, "ms": int((time.time() - t0) * 1000)}
+    return {"q": q, "answer": answer, "sources": _sources(rows), "model": (llm() or {}).get("model", LLM_MODEL), "ms": int((time.time() - t0) * 1000)}
 
 
 def overview_stream(q: str, emit) -> None:
@@ -448,8 +554,9 @@ def overview_stream(q: str, emit) -> None:
                 parts.append(delta)
                 emit("delta", {"t": delta})
     answer = _fix_cites("".join(parts).strip())
-    OVR_CACHE.put(q.lower(), {"q": q, "answer": answer, "sources": _sources(rows), "model": LLM_MODEL})
-    emit("done", {"model": LLM_MODEL, "ms": int((time.time() - t0) * 1000), "answer": answer})
+    model = (llm() or {}).get("model", LLM_MODEL)
+    OVR_CACHE.put(q.lower(), {"q": q, "answer": answer, "sources": _sources(rows), "model": model})
+    emit("done", {"model": model, "ms": int((time.time() - t0) * 1000), "answer": answer})
 
 
 TRANSLATE_MODEL = os.environ.get("WIZARD_TRANSLATE_MODEL", "gemma4-31b")
@@ -471,8 +578,9 @@ def _llm(model: str, messages: list, max_tokens: int, timeout: int) -> str:
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "messages": messages}
     if model.startswith("gpt-oss"):
         body["reasoning_effort"] = "low"
-    req = urllib.request.Request(LLM_URL, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + TINFOIL_KEY})
+    cfg = llm() or {}
+    req = urllib.request.Request(cfg.get("url", ""), data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg.get("key", "")})
     with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 loopback Tinfoil proxy
         d = json.load(r)
     return (d["choices"][0]["message"].get("content") or "").strip()
@@ -499,7 +607,8 @@ def translate_items(items: list[str], to: str = "English") -> dict:
         chunk = todo[start:start + 40]
         prompt = "\n".join(f"{n + 1}. {items[i]}" for n, i in enumerate(chunk))
         got = None
-        for model in (TRANSLATE_MODEL, TRANSLATE_FALLBACK):
+        cfg = llm() or {}
+        for model in dict.fromkeys((cfg.get("translate", TRANSLATE_MODEL), cfg.get("fallback", TRANSLATE_FALLBACK))):
             try:
                 j = _json_reply(_llm(model, [{"role": "system", "content": TRANSLATE_SYSTEM % (to, to)},
                                              {"role": "user", "content": prompt}], 4000, 60))
@@ -525,11 +634,12 @@ def read_image(data: bytes, mime: str) -> dict:
     """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model."""
     t0 = time.time()
     url = f"data:{mime};base64," + base64.b64encode(data).decode()
-    j = _json_reply(_llm(VISION_MODEL, [{"role": "system", "content": READ_IMAGE_SYSTEM},
+    vision = (llm() or {}).get("vision", VISION_MODEL)
+    j = _json_reply(_llm(vision, [{"role": "system", "content": READ_IMAGE_SYSTEM},
                                         {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
                                                                      {"type": "text", "text": "Read the text."}]}], 4000, 90))
     lines = [re.sub(r"\s+", " ", str(x)).strip() for x in (j.get("lines") or []) if str(x).strip()][:300]
-    return {"lines": lines, "model": VISION_MODEL, "ms": int((time.time() - t0) * 1000)}
+    return {"lines": lines, "model": vision, "ms": int((time.time() - t0) * 1000)}
 
 
 def cached(cache: TTLCache, q: str, fn):
@@ -619,7 +729,7 @@ class H(BaseHTTPRequestHandler):
         for kind in ("web", "images", "overview"):
             tools.append({"name": "search_" + kind, "description": "Search " + kind + "; may consume configured provider credits.", "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
         if method == "initialize":
-            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.2.0"}}
+            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.3.0"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -692,7 +802,20 @@ class H(BaseHTTPRequestHandler):
         try:
             if path == "/mcp":
                 return self._mcp(json.loads(body))
-            if path in ("/api/translate", "/api/read-image") and not LLM_URL:
+            if path == "/api/overview-provider":
+                # Owner choice from Search's own page (same-origin + X-Wizard-Request; cross-site refused above).
+                if self.headers.get("X-Wizard-Request") != "1" or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    return self._json(403, {"error": "use_search_page"})
+                j = json.loads(body)
+                if not isinstance(j, dict) or j.get("provider") not in ("tinfoil", "off"):
+                    return self._json(400, {"error": "provider must be tinfoil or off"})
+                if j["provider"] == "off":
+                    return self._json(200, unlink_tinfoil())
+                try:
+                    return self._json(200, link_tinfoil(j.get("token"), j.get("models") or [], j.get("recommended") or []))
+                except (ValueError, OSError, urllib.error.URLError):
+                    return self._json(502, {"error": "tinfoil_unreachable"})
+            if path in ("/api/translate", "/api/read-image") and not llm():
                 return self._json(503, setup_error("overview"))
             if path == "/api/translate":
                 j = json.loads(body)
@@ -722,7 +845,9 @@ class H(BaseHTTPRequestHandler):
         q = norm_q((qs.get("q") or [""])[0])
         try:
             if path == "/api/health":
-                return self._json(200, {"ok": True, "version": "0.2.0", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+                return self._json(200, {"ok": True, "version": "0.3.0", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+            if path == "/api/overview-provider":
+                return self._json(200, overview_provider())
             if path == "/api/config":
                 return self._json(200, configuration())
             if path in ("/api/web", "/api/images", "/api/overview", "/api/overview-stream"):

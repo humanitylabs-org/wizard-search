@@ -71,3 +71,12 @@ main{padding:4px 12px 40px}
 
 .caret{display:inline-block;width:7px;height:15px;margin-left:2px;vertical-align:-2px;background:var(--v);border-radius:1px;animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
+
+/* AI overviews switch on the start screen: one row, kit colours only. */
+.ai{display:flex;align-items:center;gap:12px;max-width:520px;margin:22px auto 0;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:left}
+.ai-main{flex:1;min-width:0;display:grid;gap:2px}
+.ai-main b{color:var(--ink);font-size:14px}
+.ai-main small{color:var(--ink3);font-size:12.5px;line-height:1.4}
+.ai-btn{flex:none;min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--link);font:inherit;font-weight:600;cursor:pointer}
+.ai-btn[aria-pressed="true"]{color:var(--ink2)}
+.ai-btn:disabled{opacity:.5}
