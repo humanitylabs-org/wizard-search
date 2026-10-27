@@ -65,6 +65,7 @@ class SearchTests(unittest.TestCase):
              'img_src': 'https://img.example.org/a.jpg', 'thumbnail_src': '//img.example.org/a_t.jpg', 'resolution': '800 x 600'},
             {'url': 'https://example.org/b', 'title': 'Beta receipt printer', 'content': 'receipt printer beta',
              'img_src': 'https://img.example.org/b.jpg'},
+            {'url': 'http:///videos/riverview/x', 'title': 'hostless'},
             {'url': 'javascript:alert(1)', 'title': 'bad'}]}
 
         class R:

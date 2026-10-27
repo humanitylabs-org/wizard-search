@@ -150,7 +150,8 @@ def _searx(q: str, category: str = "general") -> list[dict]:
     req = urllib.request.Request(SEARXNG_URL + "/search?" + qs, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:  # nosec B310 private sidecar
         d = json.load(r)
-    return [x for x in d.get("results") or [] if str(x.get("url", "")).startswith(("http://", "https://"))]
+    return [x for x in d.get("results") or [] if str(x.get("url", "")).startswith(("http://", "https://"))
+            and urllib.parse.urlsplit(str(x["url"])).hostname]  # Bing sometimes yields "http:///videos/..."
 
 
 def _searx_web(q: str) -> list[dict]:
