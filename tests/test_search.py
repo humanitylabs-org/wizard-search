@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from unittest.mock import patch
 
@@ -74,7 +75,7 @@ class SearchTests(unittest.TestCase):
         real_open = urllib.request.urlopen
         def fake_open(req, timeout=0):
             url = getattr(req, 'full_url', req)
-            if not str(url).startswith('http://searx.invalid'):
+            if urllib.parse.urlsplit(str(url)).hostname != 'searx.invalid':
                 return real_open(req, timeout=timeout)
             seen.append(url)
             return R()
@@ -90,7 +91,11 @@ class SearchTests(unittest.TestCase):
             self.assertEqual((code, data['source']), (200, 'searxng'))
             self.assertEqual(data['images'][0]['thumb'], 'https://img.example.org/a_t.jpg')
             self.assertEqual((data['images'][0]['w'], data['images'][0]['h']), (800, 600))
-            self.assertTrue(all('format=json' in u and u.startswith('http://searx.invalid:8080/search?') for u in seen))
+            self.assertTrue(seen)
+            for u in seen:
+                parts = urllib.parse.urlsplit(u)
+                self.assertEqual((parts.hostname, parts.port, parts.path), ('searx.invalid', 8080, '/search'))
+                self.assertEqual(urllib.parse.parse_qs(parts.query)['format'], ['json'])
 
     def test_provider_failure_not_empty_success(self):
         with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'):
