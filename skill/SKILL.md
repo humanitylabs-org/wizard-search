@@ -2,7 +2,7 @@
 name: wizard-search
 description: Search the web and images through the installed Search service.
 ---
-Read /api/config first. If state is setup_required, read SETUP.md and setup.json from this
+Read /api/config first. Fresh installs search for free through the bundled SearXNG sidecar. If state is setup_required, read SETUP.md and setup.json from this
 package; configure only the owner's approved providers. Never ask for keys in chat or embed
 keys in source. MCP POST /mcp offers search_status, search_web, search_images, search_overview.
 Each search takes {"q":"..."}. tools/call returns JSON in content[0].text and isError.

@@ -35,9 +35,18 @@ receipt does not claim that recipient Store access or installation has already b
 For archive upgrades and rollback, pin the verified archive SHA256 and loaded image ID instead
 of assuming a registry manifest digest exists.
 
-## Minimum useful configuration (choose an existing route)
+## Default provider (free, nothing to configure)
 
-Set **one** of these in private runtime environment, then recreate the container:
+The Compose file starts `wizard-search-searxng`, an unmodified upstream SearXNG image pinned by digest,
+and sets `SEARXNG_URL=http://wizard-search-searxng:8080`. It has no published port, no limiter (single
+owner behind the gateway), JSON output enabled and a random secret generated at each start. It fans
+each query out to several public engines (Brave, Google, DuckDuckGo, Bing, Wikipedia, ...), so one engine
+challenging the box does not stop results. It enables web AND image results with no account or key.
+Clear `SEARXNG_URL` to disable it; point it at another SearXNG `/search`-capable origin to replace it.
+
+## Optional extra lanes (existing paid routes only)
+
+Set any of these in private runtime environment, then recreate the container:
 - `FIRECRAWL_CLOUD_API_KEY`: existing Firecrawl Cloud key. Optional `FIRECRAWL_CLOUD_URL`
   defaults to `https://api.firecrawl.dev`. Server calls POST /v2/search with Bearer auth;
   response must contain data.web[{url,title,description}]. Enables web results only.
@@ -52,9 +61,9 @@ Set **one** of these in private runtime environment, then recreate the container
   Verify these exact zone names in the recipient account and override if different. Enables
   Google SERP and Bing images via unlocker; uses https://api.brightdata.com/request.
 
-Web races the original fast routes (DDG gets 1.2s head start before Firecrawl Cloud), then
-Bright Data/local-router fallbacks. Multiple configured lanes may incur more than one request.
-Images try Bing through SOCKS, then Bright Data unlocker. No silent vendor replacement.
+Web races the free lanes first (SearXNG, plus DDG when SOCKS is set); Firecrawl Cloud joins only after a
+3 s head start (1.2 s without SearXNG), then Bright Data/local-router fallbacks. Paid lanes therefore
+rarely spend credits. Images try SearXNG, then Bing through SOCKS, then Bright Data unlocker.
 
 ## Optional inference
 
@@ -89,8 +98,9 @@ curl -fsS --get --data-urlencode 'q=Python programming language official documen
 curl -fsS "$BASE/mcp" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Expected fresh install: health ok=true, state=setup_required; search returns 503 with
-error=setup_required, and the screen displays setup instructions. After configuration:
+Expected fresh install with the bundled sidecar: state=configured, web and images true, overview false
+(the overview box stays hidden). With `SEARXNG_URL` cleared and nothing else set: state=setup_required;
+search returns 503 with error=setup_required and the screen displays setup instructions. After configuration:
 state=configured means SETTINGS PRESENT only. Require a real query with nonempty results,
 public URLs and source lane; open a returned source. For images run /api/images?q=... and fetch
 an issued /thumb/<id>.jpg. For overview run /api/overview?q=... and require answer + sources.

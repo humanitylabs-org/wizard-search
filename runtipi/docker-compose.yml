@@ -11,6 +11,7 @@ services:
     tmpfs: [/tmp]
     environment:
       WIZARD_SEARCH_BASE: ''
+      SEARXNG_URL: ${SEARXNG_URL:-http://wizard-search-searxng:8080}
       WIZARD_SEARCH_SOCKS: ${WIZARD_SEARCH_SOCKS:-}
       FIRECRAWL_CLOUD_API_KEY: ${FIRECRAWL_CLOUD_API_KEY:-}
       FIRECRAWL_CLOUD_URL: ${FIRECRAWL_CLOUD_URL:-https://api.firecrawl.dev}
@@ -24,9 +25,38 @@ services:
       WIZARD_TRANSLATE_MODEL: ${WIZARD_TRANSLATE_MODEL:-gemma4-31b}
       WIZARD_TRANSLATE_FALLBACK: ${WIZARD_TRANSLATE_FALLBACK:-gpt-oss-120b}
       WIZARD_VISION_MODEL: ${WIZARD_VISION_MODEL:-gemma4-31b}
+    depends_on:
+      - wizard-search-searxng
     x-runtipi:
       is_main: true
       internal_port: 9288
+  # Free default provider: SearXNG metasearch (AGPL-3.0, unmodified upstream image), private to this app.
+  # No account or key. It is reachable only on the app network; no port is published.
+  wizard-search-searxng:
+    image: docker.io/searxng/searxng@sha256:64936ab0847aae6494d37edf688ce792b262e8467d48ad844c0bf3f899a45249
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 512m
+    tmpfs: [/etc/searxng, /var/cache/searxng]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf '%s\n' \
+          'use_default_settings: true' \
+          'server:' \
+          "  secret_key: \"$$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')\"" \
+          '  limiter: false' \
+          '  image_proxy: false' \
+          '  public_instance: false' \
+          'search:' \
+          '  safe_search: 1' \
+          '  formats: [html, json]' \
+          'outgoing:' \
+          '  request_timeout: 4.0' \
+          > /etc/searxng/settings.yml
+        exec /usr/local/searxng/entrypoint.sh
 x-runtipi:
   schema_version: 2
   overrides: []

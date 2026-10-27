@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "app": "wizard-search",
-  "version": "0.1.0-test.1",
+  "version": "0.2.0",
   "runtime": {
     "python": ">=3.12",
     "commands": [
@@ -16,6 +16,11 @@
     "persistent_data": false
   },
   "environment": {
+    "SEARXNG_URL": {
+      "description": "SearXNG JSON endpoint; the bundled sidecar is the free default",
+      "default": "http://wizard-search-searxng:8080",
+      "secret": false
+    },
     "WIZARD_SEARCH_SOCKS": {
       "description": "SOCKS egress URL",
       "default": "",

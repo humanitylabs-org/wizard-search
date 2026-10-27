@@ -13,7 +13,9 @@
     S.config = d;
     const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
     $('#setup-status').textContent = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
-    $('#setup').hidden = !missing.length;
+    // Optional extras (e.g. AI overview) stay quiet: only a box with no search provider at all shows setup.
+    $('#setup').hidden = d.state !== 'setup_required';
+    $('#ov').hidden = !d.capabilities.overview;
     if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure /wizard-os-home/core/app-client.js at the gateway.'; }
     return d;
   }).catch(() => { $('#setup-status').textContent = 'Configuration check failed. Reload to retry.'; return null; });
@@ -36,7 +38,7 @@
     q = String(q || '').trim(); if (!q) return;
     S.q = q; S.images = S.web = S.ov = null; S.seq++;
     $('#q').value = q; $('#clear').hidden = false; $('#q').blur();
-    $('#ov').innerHTML = shimmer(); $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
+    if (S.config?.capabilities.overview) $('#ov').innerHTML = shimmer(); $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
     tab(t || S.tab);
   }
   function ensure() {
@@ -48,7 +50,7 @@
   }
   // The overview streams: sources land first (~1-2 s), then the answer types in token by token.
   function streamOv(seq, q) {
-    if (!S.config?.capabilities.overview) { S.ov = {answer: '', error: 'setup_required'}; paintOv(); return; }
+    if (!S.config?.capabilities.overview) { S.ov = {answer: '', error: 'setup_required'}; return; }
     S.ov = { answer: '', sources: [], streaming: true };
     let es;
     const fail = err => { if (seq !== S.seq) return; S.ov = { ...S.ov, streaming: false, error: S.ov.answer ? '' : err }; paintOv(); };
@@ -123,7 +125,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.1.0-test.1' });
+  WizardApp.ready({ name: 'Search', version: '0.2.0' });
 
   WizardApp.back.register({
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',
