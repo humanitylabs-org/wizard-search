@@ -33,7 +33,7 @@ view:
     dist: web
 provides: [web-search, image-search]
 system: false
-uses: []
+uses: [tinfoil-api-key]
 needs: []
 health: /api/health
 ---

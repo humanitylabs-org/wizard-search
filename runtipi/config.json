@@ -11,7 +11,7 @@
   "categories": [
     "utilities"
   ],
-  "tipi_version": 1,
+  "tipi_version": 2,
   "version": "0.3.0",
   "exposable": false,
   "supported_architectures": [
