@@ -729,7 +729,7 @@ class H(BaseHTTPRequestHandler):
         for kind in ("web", "images", "overview"):
             tools.append({"name": "search_" + kind, "description": "Search " + kind + "; may consume configured provider credits.", "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
         if method == "initialize":
-            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.3.0"}}
+            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.3.1"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -845,7 +845,7 @@ class H(BaseHTTPRequestHandler):
         q = norm_q((qs.get("q") or [""])[0])
         try:
             if path == "/api/health":
-                return self._json(200, {"ok": True, "version": "0.3.0", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+                return self._json(200, {"ok": True, "version": "0.3.1", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
             if path == "/api/overview-provider":
                 return self._json(200, overview_provider())
             if path == "/api/config":
