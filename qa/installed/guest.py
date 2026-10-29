@@ -41,6 +41,7 @@ assert pins_match, 'Installed WAM launcher no longer advertises release pins'
 baseline_pins = Path(pins_match[1])
 pins = json.loads(baseline_pins.read_text())
 assert pins['version'] == '0.3.73'
+assert pins == json.loads((ROOT / 'base-release.json').read_text()), 'Published base manifest changed since staging'
 pins['default_apps']['web-search'] = {'app': 'wizard-search', 'repo': 'humanitylabs-org/wizard-search', 'commit': SHA, 'index_version': '0.3.2'}
 pinfile = ROOT / 'candidate-pins.json'
 save(pinfile.name, pins)

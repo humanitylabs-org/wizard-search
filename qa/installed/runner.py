@@ -102,6 +102,7 @@ def main():
         payload = {p.name:base64.b64encode(p.read_bytes()).decode() for p in (here/'guest.py',here/'dispatcher.py',here/'notice.py')}
         payload['disposable.json'] = base64.b64encode((SHA+'\n').encode()).decode()
         payload['search-files.json'] = base64.b64encode(json.dumps(cfg['search_files']).encode()).decode()
+        payload['base-release.json'] = base64.b64encode(json.dumps(cfg['base_release_document']).encode()).decode()
         seed = ('import json,base64;from pathlib import Path; p=Path.home()/"native-web-qa";p.mkdir(exist_ok=False); '
                 f'd=json.loads({json.dumps(json.dumps(payload))}); '
                 '[(p.joinpath(k).write_bytes(base64.b64decode(v))) for k,v in d.items()]')

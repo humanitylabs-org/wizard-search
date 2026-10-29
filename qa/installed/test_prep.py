@@ -9,6 +9,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('installed_runner', HERE / 'runner.py')
+assert spec and spec.loader
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
@@ -45,6 +46,7 @@ class PreparationTests(unittest.TestCase):
         guest = (HERE / 'guest.py').read_text()
         pattern = ast.literal_eval(next(n.args[0] for n in ast.walk(ast.parse(guest)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'search'))
         match = re.search(pattern, launcher)
+        assert match
         self.assertEqual(match[1], '/home/wizard/.wizard-os/release-pins.json')
         self.assertIsNotNone(re.search(r'cd "([^\"]+)" && exec "([^\"]+)" -m wam', launcher))
 
@@ -54,6 +56,12 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("allowed_mcp_names=['wizard']", dispatcher)
         for blocked in ('AIAgent(', '/chat/completions', 'openai.OpenAI', 'urllib.request', 'requests.post'):
             self.assertNotIn(blocked, dispatcher)
+
+    def test_pinned_shell_skin_ids(self):
+        browser = (HERE / 'browser.cjs').read_text()
+        self.assertIn("x.id === 'nebula'", browser)
+        self.assertIn("x.id === 'obsidian-light'", browser)
+        self.assertNotIn('/paper/i', browser)
 
 
 if __name__ == '__main__':

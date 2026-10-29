@@ -18,9 +18,9 @@ const { chromium } = require(pw);
       await page.waitForFunction(() => window.WosSkin?.list?.length > 0, undefined, {timeout:60000});
       const look = await page.evaluate(() => {
         const s=window.WosSkin.list;
-        const dark=s.find(x => /nebula/i.test(x.id)) || s[0];
-        const light=s.find(x => /paper/i.test(x.id) && x.family !== dark.family);
-        if (!light) throw Error('Two contrasting installed skins unavailable');
+        const dark=s.find(x => x.id === 'nebula');
+        const light=s.find(x => x.id === 'obsidian-light');
+        if (!dark || !light || dark.family === light.family) throw Error('Pinned Nebula and Light skins unavailable');
         return [dark.id,light.id];
       });
       for (const skin of look) {
