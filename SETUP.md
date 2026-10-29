@@ -44,9 +44,38 @@ each query out to several public engines (Brave, Google, DuckDuckGo, Bing, Wikip
 challenging the box does not stop results. It enables web AND image results with no account or key.
 Clear `SEARXNG_URL` to disable it; point it at another SearXNG `/search`-capable origin to replace it.
 
+## Provider policy: free-only by default
+
+`WIZARD_SEARCH_PROVIDER_POLICY` decides which lanes may run. A configured key or URL is **never**
+consent to spend or to send queries to another provider.
+
+- `free-only` (default, also used when unset): only the bundled SearXNG and an operator SOCKS egress run.
+  Firecrawl Cloud, Bright Data and the Firecrawl router never run, even if their keys/URLs are still set.
+  If SearXNG fails or times out the request returns 502 `provider_unavailable`; it never falls back to a
+  paid lane. With no free lane configured, search returns 503 `setup_required` naming the configured but
+  unapproved lanes.
+- `approved-upgrades`: free lanes plus exactly the lanes named in `WIZARD_SEARCH_APPROVED_UPGRADES`
+  (comma list of `firecrawl_cloud`, `brightdata`, `firecrawl_router`). Free lanes keep their head start.
+- `legacy-race`: explicit opt-in to Search 0.3.1 behaviour (every configured lane may race). Lanes already
+  started keep running after another lane wins, so they can spend credits.
+
+Invalid values (unknown mode, unknown lane, `approved-upgrades` with an empty list) fail closed to
+`free-only` and report `policy.error`. `GET /api/config` and MCP `search_status` show the effective policy,
+`usable` lanes and `blocked_configured` (names only, never values). Lane classes: SearXNG and SOCKS are
+`free`; Firecrawl Cloud and Bright Data are `paid`; the Firecrawl router is `operator`.
+
+**Upgrading from 0.3.1:** an install that had paid keys raced them automatically. After upgrade it is
+free-only until the owner explicitly chooses `approved-upgrades` (preferred, per lane) or `legacy-race`.
+Nothing is deleted: keys stay in the private environment and `blocked_configured` lists them. Choosing to
+restore paid lanes is an owner decision; the installer must not set it on the owner's behalf.
+
+AI overviews, translation and screenshot reading are a separate owner switch (below); this policy does
+not turn them on or off, and turning them on does not approve paid search lanes.
+
 ## Optional extra lanes (existing paid routes only)
 
-Set any of these in private runtime environment, then recreate the container:
+Set any of these in private runtime environment, approve them in the provider policy, then recreate
+the container:
 - `FIRECRAWL_CLOUD_API_KEY`: existing Firecrawl Cloud key. Optional `FIRECRAWL_CLOUD_URL`
   defaults to `https://api.firecrawl.dev`. Server calls POST /v2/search with Bearer auth;
   response must contain data.web[{url,title,description}]. Enables web results only.
@@ -61,9 +90,9 @@ Set any of these in private runtime environment, then recreate the container:
   Verify these exact zone names in the recipient account and override if different. Enables
   Google SERP and Bing images via unlocker; uses https://api.brightdata.com/request.
 
-Web races the free lanes first (SearXNG, plus DDG when SOCKS is set); Firecrawl Cloud joins only after a
-3 s head start (1.2 s without SearXNG), then Bright Data/local-router fallbacks. Paid lanes therefore
-rarely spend credits. Images try SearXNG, then Bing through SOCKS, then Bright Data unlocker.
+Web races the free lanes first (SearXNG, plus DDG when SOCKS is set). When approved, Firecrawl Cloud joins
+only after a 3 s head start (1.2 s without SearXNG), then approved Bright Data/local-router fallbacks.
+Images try SearXNG, then Bing through SOCKS, then (if approved) Bright Data unlocker.
 
 ## Optional AI overviews with the Tinfoil app (owner switch, no setup)
 
