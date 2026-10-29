@@ -12,9 +12,17 @@
   const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
     S.config = d;
     const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
-    $('#setup-status').textContent = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
-    // Optional extras (e.g. AI overview) stay quiet: only a box with no search provider at all shows setup.
-    $('#setup').hidden = d.state !== 'setup_required';
+    const policy = d.policy || {}, blocked = policy.blocked_configured || [];
+    const labels = { firecrawl_cloud: 'Firecrawl Cloud', brightdata: 'Bright Data', firecrawl_router: 'Firecrawl router' };
+    const status = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
+    $('#setup-status').textContent = `${status}${policy.error ? ' Search provider settings need correction; using free search only.' : ''}${blocked.length ? ' Paid or operator search providers are paused by your settings.' : ''}`;
+    // Reuse the existing setup/readiness surface, including when free search is configured.
+    // This is disclosure, not a consent prompt: never write settings or reinterpret explicit choices.
+    const notice = $('#policy-notice');
+    notice.hidden = !blocked.length;
+    const selection = [...new Set([...(policy.approved_upgrades || []), ...blocked])].join(',');
+    notice.textContent = blocked.length ? `Paused: ${blocked.map(k => labels[k] || k).join(', ')}. Your keys are kept and current provider choices are unchanged. Free search remains available when configured. To restore these fallbacks using your existing approvals, set WIZARD_SEARCH_PROVIDER_POLICY=approved-upgrades and WIZARD_SEARCH_APPROVED_UPGRADES=${selection} in Search's existing app settings, then recreate the container. To restore all configured providers racing as in 0.3.1, choose WIZARD_SEARCH_PROVIDER_POLICY=legacy-race instead. Leave free-only selected to keep paid providers paused. No provider is enabled automatically.` : '';
+    $('#setup').hidden = d.state !== 'setup_required' && !blocked.length && !policy.error;
     $('#ov').hidden = !d.capabilities.overview;
     if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure /wizard-os-home/core/app-client.js at the gateway.'; }
     return d;

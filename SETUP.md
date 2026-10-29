@@ -51,8 +51,9 @@ consent to spend or to send queries to another provider.
 
 - `free-only` (default, also used when unset): only the bundled SearXNG and an operator SOCKS egress run.
   Firecrawl Cloud, Bright Data and the Firecrawl router never run, even if their keys/URLs are still set.
-  If SearXNG fails or times out the request returns 502 `provider_unavailable`; it never falls back to a
-  paid lane. With no free lane configured, search returns 503 `setup_required` naming the configured but
+  If all free lanes fail, time out or return no results, HTTP web search returns
+  502 `{"error":"RuntimeError"}` (the existing server error shape), while MCP `web_search` reports
+  `provider_unavailable`; it never falls back to a paid lane. With no free lane configured, search returns 503 `setup_required` naming the configured but
   unapproved lanes.
 - `approved-upgrades`: free lanes plus exactly the lanes named in `WIZARD_SEARCH_APPROVED_UPGRADES`
   (comma list of `firecrawl_cloud`, `brightdata`, `firecrawl_router`). Free lanes keep their head start.
@@ -64,10 +65,23 @@ Invalid values (unknown mode, unknown lane, `approved-upgrades` with an empty li
 `usable` lanes and `blocked_configured` (names only, never values). Lane classes: SearXNG and SOCKS are
 `free`; Firecrawl Cloud and Bright Data are `paid`; the Firecrawl router is `operator`.
 
-**Upgrading from 0.3.1:** an install that had paid keys raced them automatically. After upgrade it is
-free-only until the owner explicitly chooses `approved-upgrades` (preferred, per lane) or `legacy-race`.
-Nothing is deleted: keys stay in the private environment and `blocked_configured` lists them. Choosing to
-restore paid lanes is an owner decision; the installer must not set it on the owner's behalf.
+**Upgrading from 0.3.1 is a rollout gate:** an install with paid keys previously raced them automatically.
+Without an explicit compatible policy setting, this version pauses those fallbacks. The existing Search
+setup/readiness notice stays visible even when free search is configured. It names the paused providers,
+says the keys are kept, and gives the exact settings to restore them; a key alone is still not consent.
+No new dashboard, automatic opt-in, environment rewrite or live migration is performed.
+
+Use the existing app settings (runtipi form or private environment), then recreate Search:
+- Keep `WIZARD_SEARCH_PROVIDER_POLICY=free-only` to leave paid/operator lanes paused.
+- To retain previously approved fallbacks, select `WIZARD_SEARCH_PROVIDER_POLICY=approved-upgrades` and
+  put their exact lane names in `WIZARD_SEARCH_APPROVED_UPGRADES`, e.g. `firecrawl_cloud,brightdata`.
+  The notice includes any currently approved lanes in its suggested list, so they are not dropped.
+- To deliberately retain the complete old race, select `WIZARD_SEARCH_PROVIDER_POLICY=legacy-race`.
+
+Preserve already explicit compatible settings verbatim. This is not a request to reapprove all existing
+providers or re-collect their keys: carry forward a documented existing choice only with an authorised
+compatible migration, otherwise keep the pause visible and do not roll the change out silently.
+Nothing is deleted: keys remain private and `blocked_configured` reports lane names only.
 
 AI overviews, translation and screenshot reading are a separate owner switch (below); this policy does
 not turn them on or off, and turning them on does not approve paid search lanes.

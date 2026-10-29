@@ -1,17 +1,35 @@
-# Provider-policy container acceptance overlay (used by qa/provider_policy_container.sh only).
-# A counting sink impersonates every paid/operator destination on the app network, so any paid
-# request (HTTP or TLS connect) is counted. Stale keys are fake. Never point this at real vendors.
+# QA only. Search and the counting sink have NO external route, independently of DNS.
+# Only the bundled free SearXNG sidecar joins the separate outbound network.
 services:
   wizard-search:
+    image: ${POLICY_QA_IMAGE:?set a unique QA image tag}
     environment:
+      SEARXNG_URL: http://wizard-search-searxng:8080
       FIRECRAWL_ROUTER_URL: http://paid-sink:8080/v2/search
+      FIRECRAWL_CLOUD_URL: https://api.firecrawl.dev
+      FIRECRAWL_CLOUD_API_KEY: fake-stale-firecrawl-key
+      BRIGHTDATA_API_TOKEN: fake-stale-brightdata-token
+      WIZARD_SEARCH_APPROVED_UPGRADES: ''
+      WIZARD_SEARCH_SOCKS: ''
+      WIZARD_SEARCH_TINFOIL_APP: http://tinfoil.invalid
+      TINFOIL_PROXY_URL: ''
+      TINFOIL_API_KEY: ''
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      ALL_PROXY: ''
+      http_proxy: ''
+      https_proxy: ''
+      all_proxy: ''
     depends_on:
       - paid-sink
+    networks: [default]
+  wizard-search-searxng:
+    networks: [default, free-upstream]
   paid-sink:
     image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
-    user: '1000:1000'
     read_only: true
     cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
     command:
       - python
       - -c
@@ -24,7 +42,7 @@ services:
             def log_message(self, *a): pass
             def reply(self):
                 if self.path == "/count":
-                    b = json.dumps(N).encode()
+                    with L: b = json.dumps(N).encode()
                 else:
                     with L: N["http"] += 1
                     n = int(self.headers.get("Content-Length") or 0)
@@ -34,7 +52,7 @@ services:
                 self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
             do_GET = do_POST = reply
         def tls():
-            s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 8443)); s.listen(64)
+            s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 443)); s.listen(64)
             while True:
                 c, _ = s.accept()
                 with L: N["tls"] += 1
@@ -43,26 +61,9 @@ services:
         ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
     networks:
       default:
-        aliases: [paid-sink]
-  # TLS destinations of the paid lanes resolve to this relay, which forwards :443 to the sink's counter.
-  paid-tls:
-    image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
-    read_only: true
-    cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
-    command:
-      - python
-      - -c
-      - |
-        import socket
-        s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 443)); s.listen(64)
-        while True:
-            c, _ = s.accept()
-            try: socket.create_connection(("paid-sink", 8443), timeout=3).close()
-            except OSError: pass
-            c.close()
-    depends_on:
-      - paid-sink
-    networks:
-      default:
-        aliases: [api.firecrawl.dev, api.brightdata.com]
+        aliases: [paid-sink, api.firecrawl.dev, api.brightdata.com]
+networks:
+  default:
+    internal: true
+  free-upstream:
+    internal: false
