@@ -5,3 +5,4 @@ __pycache__/
 qa/evidence/
 *.tar
 *.tar.gz
+qa-out/

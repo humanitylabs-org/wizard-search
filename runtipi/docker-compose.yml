@@ -18,6 +18,9 @@ services:
       WIZARD_SEARCH_TINFOIL_APP: ${WIZARD_SEARCH_TINFOIL_APP:-http://wizard-tinfoil:18804}
       SEARXNG_URL: ${SEARXNG_URL:-http://wizard-search-searxng:8080}
       WIZARD_SEARCH_SOCKS: ${WIZARD_SEARCH_SOCKS:-}
+      # Paid/operator lanes run only when approved here; keys alone never spend (see SETUP.md).
+      WIZARD_SEARCH_PROVIDER_POLICY: ${WIZARD_SEARCH_PROVIDER_POLICY:-free-only}
+      WIZARD_SEARCH_APPROVED_UPGRADES: ${WIZARD_SEARCH_APPROVED_UPGRADES:-}
       FIRECRAWL_CLOUD_API_KEY: ${FIRECRAWL_CLOUD_API_KEY:-}
       FIRECRAWL_CLOUD_URL: ${FIRECRAWL_CLOUD_URL:-https://api.firecrawl.dev}
       FIRECRAWL_ROUTER_URL: ${FIRECRAWL_ROUTER_URL:-}

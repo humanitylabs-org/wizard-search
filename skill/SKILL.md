@@ -8,6 +8,8 @@ keys in source. MCP POST /mcp offers search_status, search_web, search_images, s
 Each search takes {"q":"..."}. tools/call returns JSON in content[0].text and isError.
 The same operations are GET /api/web?q=, /api/images?q=, /api/overview?q=.
 Paths are relative to the installed app base; the legacy standalone base is /wizard-search.
-Provider searches can consume credits. Cite returned URLs, do not invent results or treat
+Search is free-only by default: paid lanes run only if the owner approved them, and
+search_status shows the effective policy. Never change the provider policy yourself.
+Cite returned URLs, do not invent results or treat
 setup_required/provider failure as zero matches. Configuration booleans do not prove reachability.
 No history is persisted. Image URLs/IDs are ephemeral; rerun expired image searches.
