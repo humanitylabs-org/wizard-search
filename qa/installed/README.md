@@ -13,21 +13,23 @@ No installed, visual, model-driven, ARM64 or release PASS is implied by these fi
 
 ## Run
 
-The outcome owner's private stage config names the exact copied fresh helper/base runner, Playwright installation, one-use work path/VM, source/dependency hashes and Search runtime-file hashes derived from the tested commit. Do not commit machine-specific stage paths or an owner's state. Preflight is read-only; execution must be submitted by the parent through the normal durable Linux worker:
+The outcome owner's private stage config names the exact copied positional fresh helper (no base runner), Playwright installation, one-use work path/VM, source/dependency hashes and Search runtime-file hashes derived from the tested commit. Do not commit machine-specific stage paths or an owner's state. Preflight is read-only; execution must be submitted by the parent through the normal durable Linux worker:
 
 ```
-python3 qa/installed/test_prep.py -v
+FRESH_LAUNCH_HELPER=/path/to/pinned/fresh_launch.py python3 qa/installed/test_prep.py -v
 node --check qa/installed/browser.cjs
 python3 qa/installed/runner.py /path/to/private-stage-config.json
 # Parent's durable job only, never the control-plane machine:
 python3 qa/installed/runner.py /path/to/private-stage-config.json --execute
 ```
 
+The full `fixtures/fresh_launch.py.txt` is a non-executed, byte-identical snapshot of the actual copied helper (SHA-256 `a78a1b08b0bea0ddd96b359e59645ad554be2e17443684f042998454e0d3ac7b`). Tests parse only its positional argv assignments and `l4-` assertion, then compare the runner-built argv; `FRESH_LAUNCH_HELPER` also compares a staged helper's bytes. Read-only preflight repeats that contract check against the configured, manifest-pinned helper, not just the snapshot.
+
 Preflight refuses changed/symlinked dependencies, reused work, non-worker paths, missing KVM/tools, the wrong base release/Search SHA and less than **300 GiB** free. Never lower another rig's reserve or delete another owner's data to pass admission. The parent must read current storage/active owners again before submitting.
 
 ## Intended execution (not yet run)
 
-1. Create a new guest through the existing fresh runner and install/read back 0.3.73. No owner homes, accounts or histories are imported. Restart only this new guest.
+1. Create a new guest through the existing fresh runner and install/read back 0.3.73. No owner homes, accounts or histories are imported. The helper takes `EVIDENCE_ROOT LIMA_HOME VM_NAME RELEASE`, requires `l4-`, creates the `after-install` snapshot, and stops its VM. Restart only this new guest after its successful phase receipts. It reserves host 18796 → guest 8796; the adapter uses a separate ephemeral SSH port → the raw shell port from `view.local` **if present**, otherwise `view.url` (8796). A fresh unpaired registry has no `view.local` or top-level `port`; never use a published HTTPS view port.
 2. Copy the installed release pins into a separate local QA candidate snapshot and append Search at the tested SHA. Reconfigure only that guest's **existing WAM pin-index adapter** and manager. CLI-only pins are insufficient: manager lookup could otherwise replace the candidate with the current catalog. No published manifest is edited and no default is promoted.
 3. Actual `wam install wizard-search`, immutable installed source readback, running image ID and hashes of runtime files. WAM retains its normal setup, recipe safety and dependency handling; failures are not bypassed.
 4. In that guest's installed stock Hermes engine, discover the configured `wizard` MCP gateway and invoke its discovered Search status/web tools through `model_tools.handle_function_call`. No synthetic model, direct-app RPC replacement, account sign-in or chat/session is used. Discovery/call failure remains failure. This is **dispatcher proof**, not evidence a model selected a tool or composed a cited answer.

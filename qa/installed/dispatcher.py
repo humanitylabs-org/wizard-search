@@ -1,7 +1,14 @@
 """Run inside the newly installed stock Hermes engine. No inference or sessions."""
 import json
 import time
-from tools.mcp_tool import discover_mcp_tools, shutdown_mcp_servers
+import importlib.util
+# Stock Hermes moved these public entry points into sibling modules. Import the
+# installed version's implementation; never replace discovery or dispatch.
+if importlib.util.find_spec('tools.mcp_tool_discovery'):
+    from tools.mcp_tool_discovery import discover_mcp_tools
+    from tools.mcp_tool_lifecycle import shutdown_mcp_servers
+else:
+    from tools.mcp_tool import discover_mcp_tools, shutdown_mcp_servers
 from model_tools import handle_function_call
 from tools.registry import registry
 

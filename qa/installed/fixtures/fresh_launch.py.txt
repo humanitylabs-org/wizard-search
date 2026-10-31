@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Bounded, receipt-writing fresh Ubuntu acceptance phase (run under worker lock).
+
+Usage: fresh_launch.py EVIDENCE_ROOT LIMA_HOME VM_NAME [RELEASE]
+No home mounts, no host credentials, no model substitution. The VM is retained.
+"""
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import traceback
+
+root_arg, lima, vm = sys.argv[1:4]
+release = sys.argv[4] if len(sys.argv) > 4 else '0.3.17'
+assert vm.startswith('l4-'), 'refuse non-lane VM'
+root = Path(root_arg)
+root.mkdir(parents=True, exist_ok=True)
+cache = root / 'cache'
+cache.mkdir(exist_ok=True)
+os.environ.update(LIMA_HOME=lima, PATH='/opt/homebrew/bin:/usr/local/bin:' + os.environ['PATH'], TMPDIR=str(cache))
+receipt = {'vm': vm, 'LIMA_HOME': lima, 'release_requested': release, 'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), 'started': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'steps': []}
+
+def save():
+    (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+
+def run(name, argv, timeout=180, required=True):
+    with (root / (name + '.log')).open('w') as log:
+        log.write(json.dumps(argv) + '\n'); log.flush()
+        try:
+            p = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            rc = 124
+    receipt['steps'].append({'step': name, 'exit': rc, 'log': name + '.log'})
+    save()
+    print(name, rc, flush=True)
+    if required and rc:
+        raise RuntimeError(f'{name} failed: {rc}')
+    return rc
+
+def guest(name, command, timeout=180, required=True):
+    return run(name, ['limactl', 'shell', '--workdir', '/', vm, '--', 'bash', '-lc', command], timeout, required)
+
+
+def forum_checkpoint(vm, tag='after-install'):
+    subprocess.run(['limactl', 'shell', '--workdir=/', vm, '--', 'sudo', 'sync'], check=True, timeout=120)
+    subprocess.run(['limactl', 'stop', vm], check=True, timeout=300)
+    subprocess.run(['limactl', 'snapshot', 'create', vm, '--tag', tag], check=True, timeout=300)
+    subprocess.run(['limactl', 'start', '--tty=false', vm], check=True, timeout=900)
+
+try:
+    run('host-preflight', ['bash', '-lc', 'df -h / /srv/work; free -m; test -r /dev/kvm'])
+    if Path(lima, vm).exists():
+        raise RuntimeError('refuse to overwrite existing VM; inspect receipt before retry')
+    # Download on the work volume, not macOS Library/Caches/lima.
+    image = cache / 'ubuntu-24.04-amd64.img'
+    url = 'https://cloud-images.ubuntu.com/releases/noble/release-20260615/ubuntu-24.04-server-cloudimg-amd64.img'
+    # Reuse a byte-identical image already on this host (Lima's download cache) before
+    # downloading; the sha256 check below still gates whatever we use.
+    seed = os.environ.get('L4_UBUNTU_IMAGE_SEED', '')
+    if not image.exists() and seed and Path(seed).is_file():
+        run('ubuntu-seed-copy', ['cp', seed, str(image)], 300)
+    if not image.exists():
+        run('ubuntu-download', ['curl', '-fL', '--retry', '3', '--speed-limit', '100000', '--speed-time', '60',
+            '-o', str(image), url], 2700)
+    with image.open('rb') as image_file:
+        image_hash = hashlib.file_digest(image_file, 'sha256').hexdigest()
+    receipt['base_image_sha256'] = image_hash
+    save()
+    if image_hash != '5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44':
+        raise RuntimeError('Ubuntu image checksum mismatch')
+    config = root / 'vm.yaml'
+    config.write_text(f'''vmType: qemu
+arch: x86_64
+cpus: 4
+memory: 6GiB
+disk: 40GiB
+images:
+- location: {image}
+  arch: x86_64
+  digest: sha256:5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44
+mounts: []
+containerd:
+  system: false
+  user: false
+portForwards:
+- guestPort: 8796
+  hostPort: 18796
+- guestPortRange: [1, 65535]
+  ignore: true
+''')
+    run('vm-start', ['limactl', 'start', '--tty=false', '--name=' + vm, str(config)], 900)
+    guest('fresh-baseline', 'cat /etc/os-release; id; df -h /; free -m; '
+          'if command -v hermes; then exit 9; fi; '
+          'if sudo test -d /root/.hermes || test -d ~/.hermes || sudo test -d /home/wizard/.hermes; then exit 10; fi; '
+          'echo FRESH_NO_HERMES')
+    # Preserve the actual public entry bytes, run the public command with only a release selector.
+    guest('public-install', 'set -o pipefail; mkdir -p ~/evidence; '
+          'curl -fsSL https://aiwizards.com/os.sh -o ~/evidence/public-os.sh; '
+          'sha256sum ~/evidence/public-os.sh; '
+          f'curl -fsSL https://aiwizards.com/os.sh | sudo env WIZARD_RELEASE={release} WIZARD_TAILSCALE_WAIT=1 bash', 2100, False)
+    forum_checkpoint(vm)
+    guest('installed-readback', 'sudo bash -lc '\
+          "'for h in /home/* /root; do for f in .wizard-os/release.json .wizard-os/install-outcome.json .wizard-os/install-status.json .wizard-os/apps.json; do "\
+          'if test -f "$h/$f"; then printf "\\nFILE %s\\n" "$h/$f"; cat "$h/$f"; fi; done; done; '\
+          'docker ps -a --format "{{.Names}} {{.Image}} {{.Status}}"; '\
+          'docker ps -q | xargs -r docker inspect --format "{{.Name}} image={{.Config.Image}} imageID={{.Image}}"; '\
+          "ss -ltnp'", 180, False)
+    guest('doctor', 'sudo -iu wizard bash -lc "export PATH=\\$HOME/.local/bin:\\$PATH; wam doctor"', 240, False)
+    run('vm-final', ['limactl', 'list', '--json'], 60, False)
+    receipt['state'] = 'initial-phase-complete; browser, update, restart, uninstall acceptance pending'
+except Exception:
+    receipt['state'] = 'failed'
+    receipt['error'] = traceback.format_exc()
+finally:
+    run('forum-stop', ['limactl', 'stop', '--force', vm], 180, False)
+    receipt['finished'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    save()
+    print(json.dumps(receipt, indent=2))
+if receipt['state'] == 'failed':
+    sys.exit(1)

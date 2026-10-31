@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from urllib.parse import urlparse
-from wam import cli, release_pins
+from wam import cli, release_pins, agent_link
 
 SHA = '679be8ce8eea6ba13bf031104ea991202b5c373a'
 ROOT = Path.home() / 'native-web-qa'
@@ -82,7 +82,7 @@ save('installed.json', {'source': SHA, 'search': app, 'shell': next(a for a in r
 engine = run(['sudo', '-n', 'docker', 'ps', '--filter', 'label=com.docker.compose.service=hermes-agent-engine', '--format', '{{.ID}}']).split()
 assert len(engine) == 1, 'Select the engine by service label, not package name/count'
 probe = (ROOT / 'dispatcher.py').read_text()
-result = run(['sudo', '-n', 'docker', 'exec', '-i', '-u', '1000:1000', engine[0], 'python', '-'], timeout=240, stdin=probe)
+result = run(['sudo', '-n', 'docker', 'exec', '-i', '-u', '1000:1000', engine[0], agent_link.HERMES_PY, '-'], timeout=240, stdin=probe)
 (ROOT / 'dispatcher.log').write_text(result)
 marker = [l for l in result.splitlines() if l.startswith('NATIVE_WEB_DISPATCHER=')]
 assert len(marker) == 1
@@ -90,6 +90,8 @@ proof = json.loads(marker[0].split('=', 1)[1])
 assert proof['status']['policy']['mode'] == 'free-only' and proof['search']['results']
 save('dispatcher.json', proof)
 shell = next(a for a in reg['apps'] if a['id'] == 'wizard-ux')
-port = urlparse(shell['view']['local']).port
+# Fresh unpaired registries have only view.url. WAM adds view.local only
+# when a published link replaces it; mirror WAM links.views(), not HTTPS :443.
+port = urlparse(shell['view'].get('local') or shell['view']['url']).port
 assert port and 1024 <= port <= 65535
 print('NATIVE_WEB_GUEST=' + json.dumps({'shell_port': port, 'search_commit': SHA, 'result_count': len(proof['search']['results'])}))
