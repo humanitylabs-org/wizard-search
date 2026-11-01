@@ -8,7 +8,8 @@ See [SETUP.md](SETUP.md) for operator setup, [setup.json](setup.json) for machin
 requirements, [openapi.json](openapi.json) and [skill/SKILL.md](skill/SKILL.md) for agent use.
 Python 3.12+ standard library and curl; no Python packages. Wizard supplies the shared client,
 authenticated proxy and Back/Appearance. Use `app/Dockerfile` with repository-root context.
-`runtime.package: build` lets App Manager build that pinned source on either CPU architecture;
+`runtime.package: image`: CI (`.github/workflows/image.yml`) publishes `ghcr.io/humanitylabs-org/wizard-search`
+for amd64 and arm64 on GitHub-hosted runners, and the recipe pins that digest;
 curl and CA certificates come from the distro packages in the digest-pinned Python base.
 Image binds 9288 internally; never publish it on a public interface. The service is single-owner,
 not an Internet multi-tenant API. API health is liveness, not paid-provider readiness.
