@@ -302,6 +302,38 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("Path(cli.__file__).resolve()", guest)
         self.assertIn("release_pins.image_ref(pins['images']['wizard-app-manager'])", guest)
 
+    def test_installed_shell_public_open_after_registry_refresh(self):
+        browser = (HERE / 'browser.cjs').read_text()
+        self.assertIn('?shell=${shell}&open=wizard-search', browser)
+        self.assertIn("size.width > 600 ? 'desktop' : 'phone'", browser)
+        self.assertIn("deeplink?.log?.includes('open:wizard-search')", browser)
+        self.assertIn('await window.WizCore.appsLoaded()', browser)
+        refresh = browser.index('await window.WizCore.refreshApps({afterPending:true})')
+        route = browser.index("window.WizCore.deeplink.route(location.pathname + '?open=wizard-search')")
+        frame = browser.index("page.waitForSelector('iframe[data-own-app=\"wizard-search\"]'")
+        self.assertLess(refresh, route)
+        self.assertLess(route, frame)
+        self.assertIn("registry.APP['wizard-search']", browser)
+        self.assertIn('if (!app?.url) throw Error', browser)
+        self.assertIn("assert.equal(opened.shell,shell)", browser)
+        self.assertNotIn('iframe[src*=', browser)
+        self.assertNotIn('app-session=', browser)  # must exercise the full installed shells
+
+    def test_installed_browser_failure_capture_precedes_rethrow_and_close(self):
+        browser = (HERE / 'browser.cjs').read_text()
+        capture = browser.index('await captureFailure(page,details,error)')
+        rethrow = browser.index('throw error;', capture)
+        close = browser.index('finally { await browser?.close(); }')
+        self.assertLess(capture, rethrow)
+        self.assertLess(rethrow, close)
+        self.assertIn('fullPage:true,timeout:10000', browser)
+        self.assertIn('`${stem}.png`', browser)
+        self.assertIn('`${stem}.json`', browser)
+        for field in ('href:location.href', 'iframeSrcs:', 'visibleAppIds:', 'registeredApps:', 'backendAppIds:', 'deeplinkLog:'):
+            self.assertIn(field, browser)
+        self.assertIn('catch (e) { state.screenshotError', browser)
+        self.assertIn('catch (e) { state.pageStateError', browser)
+
     def test_pinned_shell_skin_ids(self):
         browser = (HERE / 'browser.cjs').read_text()
         self.assertIn("x.id === 'nebula'", browser)
