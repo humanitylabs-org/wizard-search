@@ -211,7 +211,9 @@ def main():
             sock.bind(('127.0.0.1',0))
             port = sock.getsockname()[1]
             assert port != 18796, 'Reserved fresh-rig forward'
-        tunnel = subprocess.Popen(['ssh','-F',str(work/'lima'/vm/'ssh.config'),'-o','ExitOnForwardFailure=yes','-N','-L',f'127.0.0.1:{port}:127.0.0.1:{proof["shell_port"]}',f'lima-{vm}'], env=env, stdout=subprocess.DEVNULL, stderr=(out/'tunnel.log').open('w'))
+        # Lima's ssh.config multiplexes; a mux client hands -L to the master and exits at once,
+        # so the tunnel must own its connection for the liveness check to mean anything.
+        tunnel = subprocess.Popen(['ssh','-F',str(work/'lima'/vm/'ssh.config'),'-o','ControlMaster=no','-o','ControlPath=none','-o','ExitOnForwardFailure=yes','-N','-L',f'127.0.0.1:{port}:127.0.0.1:{proof["shell_port"]}',f'lima-{vm}'], env=env, stdout=subprocess.DEVNULL, stderr=(out/'tunnel.log').open('w'))
         for attempt in range(60):
             assert tunnel.poll() is None, 'SSH tunnel exited'
             try:

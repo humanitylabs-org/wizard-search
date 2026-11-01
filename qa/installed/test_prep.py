@@ -116,6 +116,10 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             decode(json.dumps({'result': json.dumps({'error': 'provider_unavailable'})}))
 
+    def test_tunnel_owns_its_ssh_connection(self):
+        src = Path(runner.__file__).read_text()
+        self.assertIn("'-o','ControlMaster=no','-o','ControlPath=none'", src)
+
     def test_lima_command_is_not_prequoted(self):
         command = "printf '%s\\n' 'a b'; test 1 = 1"
         argv = runner.shell_argv('l4-nw-search-test', command)
