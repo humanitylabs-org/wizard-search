@@ -76,6 +76,14 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'refuse non-lane VM'):
             runner.check_fresh_contract(self.helper(), runner.fresh_argv(c))
 
+    def test_ubuntu_seed_must_be_pinned_and_reaches_helper_env(self):
+        src = Path(runner.__file__).read_text()
+        self.assertIn("cfg['ubuntu_seed'] in cfg['files']", src)
+        self.assertIn("env['L4_UBUNTU_IMAGE_SEED'] = cfg['ubuntu_seed']", src)
+        helper = self.helper().read_text()
+        self.assertIn("os.environ.get('L4_UBUNTU_IMAGE_SEED'", helper)
+        self.assertIn("image_hash != '5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44'", helper)
+
     def test_lima_command_is_not_prequoted(self):
         command = "printf '%s\\n' 'a b'; test 1 = 1"
         argv = runner.shell_argv('l4-nw-search-test', command)

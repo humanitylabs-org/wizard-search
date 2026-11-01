@@ -73,6 +73,7 @@ def main():
     assert re.fullmatch(r'l4-nw-search-[a-z0-9-]+', cfg['vm'])
     assert 'base_runner' not in cfg, 'Unrelated update rig is forbidden'
     assert cfg['fresh_helper'] in cfg['files'], 'Unpinned fresh helper'
+    assert not cfg.get('ubuntu_seed') or cfg['ubuntu_seed'] in cfg['files'], 'Unpinned Ubuntu seed image'
     check_fresh_contract(cfg['fresh_helper'], fresh_argv(cfg))
     # Existing helper owns 18796 -> 8796. Refuse conflict before creating anything.
     with socket.socket() as probe:
@@ -93,6 +94,10 @@ def main():
     out = work / 'evidence'
     out.mkdir()
     env['LIMA_HOME'] = str(work / 'lima')
+    # Reuse the host's already-downloaded Ubuntu image (the helper still checks its sha256);
+    # a slow mirror otherwise fails the whole run in its first minutes.
+    if cfg.get('ubuntu_seed'):
+        env['L4_UBUNTU_IMAGE_SEED'] = cfg['ubuntu_seed']
     env['TMPDIR'] = str(work / 'tmp')
     Path(env['TMPDIR']).mkdir()
     vm = cfg['vm']
