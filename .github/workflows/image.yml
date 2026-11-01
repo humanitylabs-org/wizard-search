@@ -1,0 +1,72 @@
+name: Publish image
+# Builds Search on GitHub-hosted runners (amd64 natively, arm64 under QEMU: a light Python image), tests it,
+# then publishes ghcr.io/humanitylabs-org/wizard-search:sha-<commit> (immutable) and :<version> when that tag
+# does not exist yet. The recipe pins the published digest, so every Wizard pulls the same bytes.
+on:
+  push:
+    branches: [main, feature/search-test-release-20261015]
+    paths-ignore: ['runtipi/**', 'wizard.md', 'skill/**', 'README.md', 'SETUP.md', 'qa/**']
+  pull_request:
+    paths: ['app/**', 'server.py', 'web/**', 'setup.json', 'openapi.json', 'tests/**', '.github/workflows/image.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE: ghcr.io/humanitylabs-org/wizard-search
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Build test image
+        run: docker build --build-arg REVISION="$GITHUB_SHA" -f app/Dockerfile -t wizard-search:test .
+      - name: Smoke (read-only, uid 1000, no capabilities, health answers with this revision)
+        run: |
+          docker run -d --name search-smoke --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp -v svol:/data -p 127.0.0.1:19288:9288 wizard-search:test
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:19288/api/health > health.json && break; sleep 1; done
+          cat health.json
+          grep -q "\"revision\": \"$GITHUB_SHA\"" health.json
+          test "$(docker exec search-smoke id -u)" = 1000
+          docker rm -f search-smoke
+      - uses: docker/setup-qemu-action@v3
+        if: github.event_name != 'pull_request'
+      - uses: docker/setup-buildx-action@v3
+        if: github.event_name != 'pull_request'
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish sha-<commit> (amd64 and arm64)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: REVISION=${{ github.sha }}
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - name: Version tag (only when it does not exist yet; tags are never re-pushed)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version: *//p' wizard.md | head -1)
+          if docker buildx imagetools inspect "$IMAGE:$version" >/dev/null 2>&1; then
+            echo "$IMAGE:$version already exists; left unchanged"
+          else
+            docker buildx imagetools create -t "$IMAGE:$version" "$IMAGE:sha-$GITHUB_SHA"
+          fi
+      - name: Published image is multi-arch and runs
+        if: github.event_name != 'pull_request'
+        run: |
+          docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" | tee manifest.txt
+          grep -q linux/amd64 manifest.txt && grep -q linux/arm64 manifest.txt
+          docker run --rm --entrypoint python3 "$IMAGE:sha-$GITHUB_SHA" -c "print('ok')"
