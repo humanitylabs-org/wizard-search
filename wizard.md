@@ -12,7 +12,7 @@ receives_voice_input: true
 icon: web/icon.png
 runtime:
   kind: runtipi
-  package: build
+  package: image
   config: runtipi/config.json
   compose: runtipi/docker-compose.yml
 api:
