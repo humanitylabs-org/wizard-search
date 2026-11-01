@@ -54,6 +54,22 @@ def check_fresh_contract(helper, argv):
     assert (scope['root_arg'], scope['lima'], scope['vm'], scope['release']) == tuple(argv[2:])
 
 
+# The pinned 0.3.73 App Manager doctor probes a route its API no longer serves; tracked
+# in the launch work (wizard-os #90) and unrelated to Search. Tolerate exactly that one
+# line; any other FAIL, or a doctor that did not run, still stops the test.
+KNOWN_DOCTOR_FAILS = ("FAIL  App Manager API reachable  GET /marketplace/all -> 404: b'404 page not found\\n'",)
+
+
+def doctor_known_issues(exit_code, log):
+    fails = [l.rstrip() for l in log.splitlines() if l.startswith('FAIL')]
+    passes = [l for l in log.splitlines() if l.startswith('PASS')]
+    if exit_code == 0 and not fails:
+        return []
+    unknown = [l for l in fails if l not in KNOWN_DOCTOR_FAILS]
+    assert exit_code in (0, 1) and passes and fails and not unknown, ('doctor', exit_code, unknown or 'no checks')
+    return fails
+
+
 def shell_argv(vm, command):
     # Lima quotes argv itself; prequoting makes bash execute a literal filename.
     return ['limactl', 'shell', '--workdir', '/', vm, '--', 'bash', '-lc', command]
@@ -143,7 +159,9 @@ def main():
         fresh = json.loads((work/'fresh-evidence/receipt.json').read_text())
         assert fresh['vm'] == vm and fresh['release_requested'] == cfg['release']
         exits = {step['step']: step['exit'] for step in fresh['steps']}
-        assert all(exits.get(step) == 0 for step in ('fresh-baseline', 'public-install', 'installed-readback', 'doctor', 'forum-stop')), exits
+        assert all(exits.get(step) == 0 for step in ('fresh-baseline', 'public-install', 'installed-readback', 'forum-stop')), exits
+        doctor_issues = doctor_known_issues(exits.get('doctor'), (work/'fresh-evidence/doctor.log').read_text())
+        receipt['doctor_known_issues'] = doctor_issues
         receipt['fresh_checkpoint'] = 'after-install; fresh rig stopped owned VM; restart follows'
         run('start', ['limactl','start','--tty=false',vm], 300)
         payload = {p.name:base64.b64encode(p.read_bytes()).decode() for p in (here/'guest.py',here/'dispatcher.py',here/'notice.py')}

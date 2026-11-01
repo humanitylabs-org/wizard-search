@@ -84,6 +84,16 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("os.environ.get('L4_UBUNTU_IMAGE_SEED'", helper)
         self.assertIn("image_hash != '5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44'", helper)
 
+    def test_doctor_tolerates_only_known_app_manager_404(self):
+        ok = "PASS  index reachable  x\nFAIL  App Manager API reachable  GET /marketplace/all -> 404: b'404 page not found\\n'\n"
+        self.assertEqual(len(runner.doctor_known_issues(1, ok)), 1)
+        self.assertEqual(runner.doctor_known_issues(0, "PASS  a\n"), [])
+        for bad in ("PASS  a\nFAIL  Hermes discovers wizard-builder  denied\n", "", ok + "FAIL  other\n"):
+            with self.assertRaises(AssertionError):
+                runner.doctor_known_issues(1, bad)
+        with self.assertRaises(AssertionError):
+            runner.doctor_known_issues(None, ok)
+
     def test_lima_command_is_not_prequoted(self):
         command = "printf '%s\\n' 'a b'; test 1 = 1"
         argv = runner.shell_argv('l4-nw-search-test', command)
