@@ -22,6 +22,16 @@ import time
 SHA = '679be8ce8eea6ba13bf031104ea991202b5c373a'
 
 
+def wam_candidate(value):
+    """Only this public host-CLI repo at a complete immutable Git SHA is admitted."""
+    if value is None:
+        return None
+    assert isinstance(value, dict) and set(value) == {'repo', 'commit'}, 'Invalid wam_candidate shape'
+    assert value['repo'] == 'humanitylabs-org/wizard-app-manager', 'Unexpected WAM candidate repository'
+    assert isinstance(value['commit'], str) and re.fullmatch(r'[0-9a-f]{40}', value['commit']), 'Unpinned WAM candidate'
+    return dict(value)
+
+
 def check_manifest(manifest):
     for name, expected in manifest.items():
         p = Path(name)
@@ -82,7 +92,11 @@ def main():
     args = ap.parse_args()
     cfg = json.loads(args.config.read_text())
     here = Path(__file__).resolve().parent
+    candidate = wam_candidate(cfg.get('wam_candidate'))
     check_manifest(cfg['files'])
+    if candidate:
+        for script in ('runner.py', 'guest.py', 'wam_candidate.py'):
+            assert str(here / script) in cfg['files'], f'Unpinned candidate adapter: {script}'
     work = Path(cfg['work'])
     assert work.is_absolute() and str(work).startswith('/srv/work/')
     assert not work.exists(), 'Refuse reused mutable VM/evidence directory'
@@ -101,7 +115,7 @@ def main():
         assert shutil.which(command), f'Missing {command}'
     assert Path(cfg['playwright'], 'package.json').is_file()
     assert json.loads(Path(cfg['playwright'], 'package.json').read_text())['version'] == '1.64.1'
-    print(json.dumps({'preflight':'PASS','release':cfg['release'],'search':SHA,'execute':args.execute}), flush=True)
+    print(json.dumps({'preflight':'PASS','release':cfg['release'],'search':SHA,'execute':args.execute,'wam_candidate':candidate}), flush=True)
     if not args.execute:
         return
     # Do not carry this worker's provider credentials into installer, browser or guest commands.
@@ -118,7 +132,7 @@ def main():
     Path(env['TMPDIR']).mkdir()
     vm = cfg['vm']
     tunnel = None
-    receipt = {'search_commit':SHA,'base_release':cfg['release'],'scope':'installed WAM + stock dispatcher + real shell; no inference, Browser work or live deployment','state':'running','files':cfg['files']}
+    receipt = {'search_commit':SHA,'base_release':cfg['release'],'scope':'installed WAM + stock dispatcher + real shell; no inference, Browser work or live deployment','state':'running','files':cfg['files'],'wam_candidate_requested':candidate}
 
     def save():
         (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -164,7 +178,8 @@ def main():
         receipt['doctor_known_issues'] = doctor_issues
         receipt['fresh_checkpoint'] = 'after-install; fresh rig stopped owned VM; restart follows'
         run('start', ['limactl','start','--tty=false',vm], 300)
-        payload = {p.name:base64.b64encode(p.read_bytes()).decode() for p in (here/'guest.py',here/'dispatcher.py',here/'notice.py')}
+        payload = {p.name:base64.b64encode(p.read_bytes()).decode() for p in (here/'guest.py',here/'dispatcher.py',here/'notice.py',here/'wam_candidate.py')}
+        payload['wam-candidate-request.json'] = base64.b64encode(json.dumps(candidate).encode()).decode()
         payload['disposable.json'] = base64.b64encode((SHA+'\n').encode()).decode()
         payload['search-files.json'] = base64.b64encode(json.dumps(cfg['search_files']).encode()).decode()
         payload['base-release.json'] = base64.b64encode(json.dumps(cfg['base_release_document']).encode()).decode()
@@ -172,6 +187,14 @@ def main():
                 f'd=json.loads({json.dumps(json.dumps(payload))}); '
                 '[(p.joinpath(k).write_bytes(base64.b64decode(v))) for k,v in d.items()]')
         shell('seed-owned-guest', 'sudo -iu wizard python3 -c ' + shlex.quote(seed))
+        if candidate:
+            candidate_text = guest('wam-candidate', 'wam_candidate.py')
+            candidates = [x for x in candidate_text.splitlines() if x.startswith('NATIVE_WEB_WAM_CANDIDATE=')]
+            assert len(candidates) == 1
+            receipt['wam_candidate'] = json.loads(candidates[0].split('=', 1)[1])
+            assert receipt['wam_candidate']['commit'] == candidate['commit']
+            (out / 'wam-candidate.json').write_text(json.dumps(receipt['wam_candidate'], indent=2) + '\n')
+            save()
         text = guest('install-and-dispatch', 'guest.py')
         marker = [x for x in text.splitlines() if x.startswith('NATIVE_WEB_GUEST=')]
         assert len(marker) == 1

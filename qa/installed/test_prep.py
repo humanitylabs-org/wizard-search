@@ -136,6 +136,150 @@ class PreparationTests(unittest.TestCase):
         for blocked in ('AIAgent(', '/chat/completions', 'openai.OpenAI', 'urllib.request', 'requests.post'):
             self.assertNotIn(blocked, dispatcher)
 
+    def candidate_module(self):
+        spec = importlib.util.spec_from_file_location('candidate_adapter', HERE / 'wam_candidate.py')
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_candidate_is_optional_but_never_mutable(self):
+        self.assertIsNone(runner.wam_candidate(None))
+        candidate = {'repo': 'humanitylabs-org/wizard-app-manager', 'commit': 'a' * 40}
+        self.assertEqual(runner.wam_candidate(candidate), candidate)
+        for invalid in ({}, {'repo': candidate['repo'], 'commit': 'main'},
+                        {'repo': candidate['repo'], 'commit': 'a' * 12},
+                        {'repo': candidate['repo'], 'commit': 'A' * 40},
+                        {'repo': 'someone/other', 'commit': 'a' * 40},
+                        {**candidate, 'branch': 'main'}):
+            with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                runner.wam_candidate(invalid)
+
+    def candidate_fixture(self, root):
+        checkout = root / 'wam'
+        (checkout / '.git').mkdir(parents=True)
+        launcher = root / 'launcher'
+        launcher.write_text(f'export WIZARD_RELEASE_PINS="${{WIZARD_RELEASE_PINS-baseline}}"\ncd "{checkout}" && exec "/usr/bin/python3" -m wam "$@"\n')
+        compose = root / 'compose.yml'
+        compose.write_text('image: baseline-manager@sha256:fixture\n')
+        return checkout, launcher, compose
+
+    def candidate_command(self, checkout, sha, calls, mismatch=None, dirty=False):
+        def run(argv, cwd=None):
+            calls.append(argv)
+            self.assertEqual(cwd, checkout)
+            if 'status' in argv:
+                return ' M tracked.py' if dirty else ''
+            if 'FETCH_HEAD^{commit}' in argv:
+                return mismatch or sha
+            if argv[-2:] == ['rev-parse', 'HEAD']:
+                return sha if any('checkout' in a for a in calls) else 'b' * 40
+            if argv[0] == '/usr/bin/python3':
+                return str(checkout / 'wam/packaging.py')
+            return ''
+        return run
+
+    def test_candidate_reuses_launcher_checkout_and_records_sha(self):
+        with tempfile.TemporaryDirectory() as t:
+            checkout, launcher, compose = self.candidate_fixture(Path(t))
+            calls, sha = [], 'a' * 40
+            before = launcher.read_bytes(), compose.read_bytes()
+            result = self.candidate_module().install_candidate(
+                {'repo': 'humanitylabs-org/wizard-app-manager', 'commit': sha}, launcher, compose,
+                self.candidate_command(checkout, sha, calls))
+            fetch = next(a for a in calls if 'fetch' in a)
+            self.assertEqual(fetch[-2:], ['https://github.com/humanitylabs-org/wizard-app-manager.git', sha])
+            self.assertIn('credential.helper=', fetch)
+            self.assertIn('core.hooksPath=/dev/null', fetch)
+            self.assertEqual(result['commit'], sha)
+            self.assertEqual(result['before_commit'], 'b' * 40)
+            self.assertEqual(result['manager_compose_sha256'], hashlib.sha256(before[1]).hexdigest())
+            self.assertEqual((launcher.read_bytes(), compose.read_bytes()), before)
+            self.assertFalse(any('install.sh' in a or 'docker' in a or 'pip' in a for a in calls))
+
+    def test_candidate_fetch_mismatch_refuses_checkout(self):
+        with tempfile.TemporaryDirectory() as t:
+            checkout, launcher, compose = self.candidate_fixture(Path(t))
+            calls, sha = [], 'a' * 40
+            with self.assertRaisesRegex(AssertionError, 'Fetched WAM candidate SHA mismatch'):
+                self.candidate_module().install_candidate(
+                    {'repo': 'humanitylabs-org/wizard-app-manager', 'commit': sha}, launcher, compose,
+                    self.candidate_command(checkout, sha, calls, mismatch='c' * 40))
+            self.assertFalse(any('checkout' in a for a in calls))
+
+    def test_candidate_dirty_baseline_refuses_fetch(self):
+        with tempfile.TemporaryDirectory() as t:
+            checkout, launcher, compose = self.candidate_fixture(Path(t))
+            calls, sha = [], 'a' * 40
+            with self.assertRaisesRegex(AssertionError, 'Dirty baseline'):
+                self.candidate_module().install_candidate(
+                    {'repo': 'humanitylabs-org/wizard-app-manager', 'commit': sha}, launcher, compose,
+                    self.candidate_command(checkout, sha, calls, dirty=True))
+            self.assertFalse(any('fetch' in a for a in calls))
+
+    def test_candidate_checkout_and_module_mismatch_refused(self):
+        for broken in ('HEAD', 'module'):
+            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as t:
+                checkout, launcher, compose = self.candidate_fixture(Path(t))
+                calls, sha = [], 'a' * 40
+                normal = self.candidate_command(checkout, sha, calls)
+                def command(argv, cwd=None):
+                    result = normal(argv, cwd)
+                    if broken == 'HEAD' and argv[-2:] == ['rev-parse', 'HEAD'] and any('checkout' in a for a in calls):
+                        return 'c' * 40
+                    if broken == 'module' and argv[0] == '/usr/bin/python3':
+                        return '/unrelated/wam/packaging.py'
+                    return result
+                with self.assertRaises(AssertionError):
+                    self.candidate_module().install_candidate(
+                        {'repo': 'humanitylabs-org/wizard-app-manager', 'commit': sha}, launcher, compose, command)
+
+    def test_candidate_real_detached_checkout_and_launcher(self):
+        # Real git/Python, local fixture transport only: no GitHub, installer, VM or Docker.
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            upstream, checkout = root / 'upstream', root / 'installed'
+            module = self.candidate_module()
+            module.run(['git', 'init', str(upstream)])
+            (upstream / 'wam').mkdir()
+            (upstream / 'wam/__init__.py').write_text('')
+            (upstream / 'wam/packaging.py').write_text('CONTEXT = "host"\n')
+            module.run(['git', 'add', '.'], cwd=upstream)
+            commit = ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m']
+            module.run(commit + ['baseline'], cwd=upstream)
+            module.run(['git', 'clone', str(upstream), str(checkout)])
+            (upstream / 'wam/packaging.py').write_text('CONTEXT = "/app-data"\n')
+            module.run(['git', 'add', '.'], cwd=upstream)
+            module.run(commit + ['candidate'], cwd=upstream)
+            sha = module.run(['git', 'rev-parse', 'HEAD'], cwd=upstream)
+            launcher, compose = root / 'wam-launcher', root / 'compose.yml'
+            import sys
+            launcher.write_text(f'cd "{checkout}" && exec "{sys.executable}" -m wam "$@"\n')
+            compose.write_text('image: unchanged-baseline\n')
+            def local_transport(argv, cwd=None):
+                argv = [str(upstream) if a == 'https://github.com/humanitylabs-org/wizard-app-manager.git' else a for a in argv]
+                # Avoid creating an untracked __pycache__ in this tiny synthetic checkout.
+                if argv[0] == sys.executable:
+                    argv.insert(1, '-B')
+                return module.run(argv, cwd)
+            result = module.install_candidate({'repo': 'humanitylabs-org/wizard-app-manager', 'commit': sha},
+                                              launcher, compose, local_transport)
+            self.assertEqual(result['commit'], sha)
+            self.assertEqual((checkout / 'wam/packaging.py').read_text(), 'CONTEXT = "/app-data"\n')
+            self.assertEqual(module.run(['git', 'status', '--porcelain'], cwd=checkout), '')
+            self.assertEqual(module.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=checkout), 'HEAD')
+
+    def test_candidate_phase_is_after_baseline_before_search_and_receipted(self):
+        src = (HERE / 'runner.py').read_text()
+        self.assertLess(src.index("run('fresh-rig'"), src.index("guest('wam-candidate'"))
+        self.assertLess(src.index("guest('wam-candidate'"), src.index("guest('install-and-dispatch'"))
+        self.assertIn("receipt['wam_candidate']", src)
+        self.assertIn("str(here / script) in cfg['files']", src)
+        self.assertIn("receipt['cleanup']['verified_not_running']", src)
+        guest = (HERE / 'guest.py').read_text()
+        self.assertIn("Path(cli.__file__).resolve()", guest)
+        self.assertIn("release_pins.image_ref(pins['images']['wizard-app-manager'])", guest)
+
     def test_pinned_shell_skin_ids(self):
         browser = (HERE / 'browser.cjs').read_text()
         self.assertIn("x.id === 'nebula'", browser)

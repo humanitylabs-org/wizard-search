@@ -27,6 +27,13 @@ def save(name, doc):
     (ROOT / name).write_text(json.dumps(doc, indent=2) + '\n')
 
 
+candidate = json.loads((ROOT / 'wam-candidate-request.json').read_text())
+if candidate:
+    proof = json.loads((ROOT / 'wam-candidate.json').read_text())
+    assert proof['repo'] == candidate['repo'] and proof['commit'] == candidate['commit']
+    assert run(['git', 'rev-parse', 'HEAD'], cwd=proof['checkout']).strip() == candidate['commit']
+    assert Path(cli.__file__).resolve() == Path(proof['checkout'], 'wam/cli.py').resolve()
+
 c = cli.Config()
 assert c.runtipi_root.is_relative_to(Path.home())
 reg = json.loads((c.home / 'apps.json').read_text())

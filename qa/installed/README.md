@@ -27,6 +27,14 @@ The full `fixtures/fresh_launch.py.txt` is a non-executed, byte-identical snapsh
 
 Preflight refuses changed/symlinked dependencies, reused work, non-worker paths, missing KVM/tools, the wrong base release/Search SHA and less than **300 GiB** free. Never lower another rig's reserve or delete another owner's data to pass admission. The parent must read current storage/active owners again before submitting.
 
+## Candidate host CLI (optional)
+
+A private config may add `"wam_candidate": {"repo": "humanitylabs-org/wizard-app-manager", "commit": "<40 lowercase hex SHA>"}`. Missing/null leaves the baseline untouched; branches, tags, abbreviated SHAs, other repos and extra fields fail preflight. Pin `wam_candidate.py` in `files` alongside the runner and guest.
+
+After the successful fresh 0.3.73 baseline/readback and before importing WAM in the Search phase, the guest parses the installed launcher, requires its checkout clean, fetches **only** that SHA without credentials/hooks, verifies `FETCH_HEAD`, checks out detached and verifies HEAD and the imported module path. This reuses `install.sh:102-109`: the launcher executes Python `-m wam` from the checkout, not a pip-installed package. It never runs `install.sh`, rewrites the launcher, restarts the host API or changes the baseline manager image. The later existing pin-index setup still selects the manager image from 0.3.73.
+
+`wam-candidate.json` and the parent receipt retain requested/actual/baseline commits, source/interpreter/module paths and unchanged launcher/manager-compose hashes. Search independently verifies the candidate receipt and loaded module before `wam install`. A candidate failure remains failure; the existing finally-stop, credential stripping and no-inference guards are unchanged. This is candidate acceptance, not acceptance of unmodified published 0.3.73.
+
 ## Intended execution (not yet run)
 
 1. Create a new guest through the existing fresh runner and install/read back 0.3.73. No owner homes, accounts or histories are imported. The helper takes `EVIDENCE_ROOT LIMA_HOME VM_NAME RELEASE`, requires `l4-`, creates the `after-install` snapshot, and stops its VM. Restart only this new guest after its successful phase receipts. It reserves host 18796 → guest 8796; the adapter uses a separate ephemeral SSH port → the raw shell port from `view.local` **if present**, otherwise `view.url` (8796). A fresh unpaired registry has no `view.local` or top-level `port`; never use a published HTTPS view port.
