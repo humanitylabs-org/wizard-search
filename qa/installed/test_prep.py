@@ -1,3 +1,4 @@
+import json
 """Lightweight preparation regressions. Never start a VM, container or browser."""
 import ast
 import importlib.util
@@ -98,6 +99,22 @@ class PreparationTests(unittest.TestCase):
         # A 12-hex stage dir pushed the real socket path to exactly 108 bytes and limactl refused.
         self.assertFalse(runner.lima_socket_fits('/srv/work/native-web-installed-a68a475a49c7/run', 'l4-nw-search-679be8c-a68a475a'))
         self.assertTrue(runner.lima_socket_fits('/srv/work/native-web-installed-a71d8dea/run', 'l4-nw-search-679be8c-a71d8dea'))
+
+    def test_dispatcher_decode_unwraps_stock_hermes_result(self):
+        import ast
+        src = (Path(runner.__file__).parent / 'dispatcher.py').read_text()
+        fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == 'decode')
+        ns = {'json': json}
+        exec(compile(ast.Module([fn], []), 'dispatcher', 'exec'), ns)
+        decode = ns['decode']
+        body = {'policy': {'mode': 'free-only'}}
+        self.assertEqual(decode(json.dumps({'result': json.dumps(body)})), body)
+        self.assertEqual(decode(json.dumps({'result': 'x', 'structuredContent': body})), body)
+        self.assertEqual(decode({'content': [{'type': 'text', 'text': json.dumps(body)}]}), body)
+        with self.assertRaises(AssertionError):
+            decode(json.dumps({'error': 'boom'}))
+        with self.assertRaises(AssertionError):
+            decode(json.dumps({'result': json.dumps({'error': 'provider_unavailable'})}))
 
     def test_lima_command_is_not_prequoted(self):
         command = "printf '%s\\n' 'a b'; test 1 = 1"

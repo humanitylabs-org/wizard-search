@@ -14,11 +14,18 @@ from tools.registry import registry
 
 
 def decode(raw):
+    # Stock Hermes renders an MCP call as {"result": "<text>"} (plus optional
+    # structuredContent/_meta); older shapes may still carry MCP content blocks.
     value = json.loads(raw) if isinstance(raw, str) else raw
     assert isinstance(value, dict) and not value.get('error') and not value.get('isError'), value
-    if 'content' in value:
+    if isinstance(value.get('structuredContent'), dict):
+        value = value['structuredContent']
+    elif 'result' in value:
+        value = value['result']
+        value = json.loads(value) if isinstance(value, str) else value
+    if isinstance(value, dict) and 'content' in value:
         value = json.loads(next(x['text'] for x in value['content'] if x.get('type') == 'text'))
-    assert not value.get('error'), value
+    assert isinstance(value, dict) and not value.get('error'), value
     return value
 
 
