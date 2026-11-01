@@ -94,6 +94,11 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             runner.doctor_known_issues(None, ok)
 
+    def test_lima_socket_path_limit_is_checked(self):
+        # A 12-hex stage dir pushed the real socket path to exactly 108 bytes and limactl refused.
+        self.assertFalse(runner.lima_socket_fits('/srv/work/native-web-installed-a68a475a49c7/run', 'l4-nw-search-679be8c-a68a475a'))
+        self.assertTrue(runner.lima_socket_fits('/srv/work/native-web-installed-a71d8dea/run', 'l4-nw-search-679be8c-a71d8dea'))
+
     def test_lima_command_is_not_prequoted(self):
         command = "printf '%s\\n' 'a b'; test 1 = 1"
         argv = runner.shell_argv('l4-nw-search-test', command)

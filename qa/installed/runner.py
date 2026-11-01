@@ -80,6 +80,12 @@ def doctor_known_issues(exit_code, log):
     return fails
 
 
+def lima_socket_fits(work, vm):
+    # limactl refuses an instance whose longest socket path (ssh.sock + 16-char suffix)
+    # reaches 108 bytes; check before any VM work starts.
+    return len(str(Path(work) / 'lima' / vm / 'ssh.sock.1234567890123456')) < 108
+
+
 def shell_argv(vm, command):
     # Lima quotes argv itself; prequoting makes bash execute a literal filename.
     return ['limactl', 'shell', '--workdir', '/', vm, '--', 'bash', '-lc', command]
@@ -101,6 +107,7 @@ def main():
     assert work.is_absolute() and str(work).startswith('/srv/work/')
     assert not work.exists(), 'Refuse reused mutable VM/evidence directory'
     assert re.fullmatch(r'l4-nw-search-[a-z0-9-]+', cfg['vm'])
+    assert lima_socket_fits(work, cfg['vm']), 'Lima socket path would exceed UNIX_PATH_MAX; shorten the stage dir or VM name'
     assert 'base_runner' not in cfg, 'Unrelated update rig is forbidden'
     assert cfg['fresh_helper'] in cfg['files'], 'Unpinned fresh helper'
     assert not cfg.get('ubuntu_seed') or cfg['ubuntu_seed'] in cfg['files'], 'Unpinned Ubuntu seed image'
