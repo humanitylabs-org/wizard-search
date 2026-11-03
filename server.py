@@ -3,8 +3,8 @@
 
 Routes (all under /wizard-search):
   GET  /                      the app (dark, phone-first)
-  GET  /api/images?q=         image results (Bing images over the Thales residential tunnel; Bright Data fallback)
-  GET  /api/web?q=            web results (Bright Data SERP, parsed; local Firecrawl router fallback)
+  GET  /api/images?q=         image results (bundled SearXNG; optional SOCKS Bing; approved Bright Data fallback)
+  GET  /api/web?q=            web results (bundled SearXNG; optional SOCKS DDG; approved paid/operator lanes only)
   GET  /api/overview?q=       short cited answer over the web results (Tinfoil private inference)
   GET  /img/<id>.jpg          full-size image proxy, only for ids issued by a recent image search
   POST /api/translate         {"items": [...], "to": "English"} → same-order translations (Tinfoil gemma4-31b, gpt-oss fallback)
@@ -12,6 +12,9 @@ Routes (all under /wizard-search):
   GET  /api/health
 
 Loopback only; the private gateway adds Tailnet identity. Queries are never logged.
+
+Provider policy (WIZARD_SEARCH_PROVIDER_POLICY): free-only by default. Paid or operator-run lanes run only when
+approved by name; a configured key is never consent to spend. See provider_policy() and SETUP.md.
 """
 from __future__ import annotations
 
@@ -215,6 +218,7 @@ def curl(url: str, *, socks: bool, timeout: int = 15, binary: bool = False, max_
 
 
 def bd_request(payload: dict, timeout: int = 30) -> bytes:
+    require_approved("brightdata")  # the only Bright Data egress; refuses before any network call
     if not BD_TOKEN:
         raise RuntimeError("no bright data token")
     req = urllib.request.Request("https://api.brightdata.com/request", data=json.dumps(payload).encode(),
@@ -290,6 +294,7 @@ def _searx_images(q: str) -> list[dict]:
 
 
 def image_search(q: str) -> dict:
+    pol = provider_policy()
     qs = urllib.parse.urlencode({"q": q, "first": 1, "count": 60, "mmasync": 1, "setlang": "en-US", "adlt": "moderate"})
     url = "https://www.bing.com/images/async?" + qs
     items, source = [], ""
@@ -306,7 +311,7 @@ def image_search(q: str) -> dict:
                 items, source = more, "bing"
         except Exception:
             pass
-    if len(items) < 6 and BD_TOKEN:
+    if len(items) < 6 and BD_TOKEN and lane_allowed("brightdata", pol):
         try:
             page = bd_request({"zone": BD_UNLOCK_ZONE, "url": url, "format": "raw"}, timeout=30).decode("utf8", "replace")
             more = parse_bing_images(page)
@@ -325,7 +330,7 @@ def image_search(q: str) -> dict:
         it["host"] = re.sub(r"^www\.", "", it["host"])
     if not items:
         raise RuntimeError("image providers unavailable or returned no results")
-    return {"q": q, "source": source, "images": items}
+    return {"q": q, "source": source, "policy": pol["mode"], "images": items}
 
 
 # ---------------------------------------------------------------- web
@@ -353,6 +358,7 @@ def _serp(q: str) -> list[dict]:
 
 
 def _local(q: str) -> list[dict]:
+    require_approved("firecrawl_router")
     if not FIRECRAWL_URL:
         raise RuntimeError("local Firecrawl router not configured")
     req = urllib.request.Request(FIRECRAWL_URL, data=json.dumps({"query": q, "limit": 8}).encode(),
@@ -371,26 +377,104 @@ FC_CLOUD_URL = os.environ.get("FIRECRAWL_CLOUD_URL", "https://api.firecrawl.dev"
 FC_CLOUD_KEY = os.environ.get("FIRECRAWL_CLOUD_API_KEY", "")
 DDG_COOLDOWN = {"until": 0.0}
 
+# ---------------------------------------------------------------- provider policy
+# Every search lane is classified. "free" lanes need no account and spend nothing (the bundled SearXNG, or the
+# operator's own SOCKS egress). "paid" lanes spend vendor credits; "operator" lanes call an operator-run service
+# whose cost Search cannot see. Paid and operator lanes are UPGRADES: they run only when the policy approves them
+# by name. A configured key or URL is never consent to spend or to send queries to a new provider.
+# Overview/translate/read-image inference is a separate owner switch (overview-provider), not governed here.
+LANES = {
+    "searxng": {"class": "free", "capabilities": ["web", "images"],
+                "data": "query sent to public search engines through the bundled SearXNG"},
+    "socks": {"class": "free", "capabilities": ["web", "images"],
+              "data": "query sent to DuckDuckGo/Bing through the operator's SOCKS egress"},
+    "firecrawl_cloud": {"class": "paid", "capabilities": ["web"], "data": "query sent to Firecrawl Cloud"},
+    "brightdata": {"class": "paid", "capabilities": ["web", "images"], "data": "query sent to Bright Data"},
+    "firecrawl_router": {"class": "operator", "capabilities": ["web"],
+                         "data": "query sent to the operator's Firecrawl-compatible router"},
+}
+UPGRADE_LANES = tuple(k for k, v in LANES.items() if v["class"] != "free")
+POLICY_SCHEMA = 1
+POLICY_MODES = ("free-only", "approved-upgrades", "legacy-race")
+# Operator settings (private runtime environment). Unset = free-only.
+POLICY_MODE = os.environ.get("WIZARD_SEARCH_PROVIDER_POLICY", "")
+POLICY_APPROVED = os.environ.get("WIZARD_SEARCH_APPROVED_UPGRADES", "")
+
+
+class PolicyBlocked(RuntimeError):
+    """An upgrade lane was about to run without approval. Raised before any network call."""
+
+
+def provider_policy() -> dict:
+    """The effective, versioned provider policy. Invalid input fails closed to free-only and says why.
+
+    free-only          bundled/free lanes only; paid and operator lanes never run, even with keys present.
+    approved-upgrades  free lanes plus exactly the upgrade lanes named in WIZARD_SEARCH_APPROVED_UPGRADES.
+    legacy-race        explicit opt-in to Search <= 0.3.1 behaviour: every configured lane may race.
+    """
+    requested = re.sub(r"[^a-z0-9_,-]", "", str(POLICY_MODE or "").strip().lower())[:40]
+    names = [n for n in re.sub(r"[^a-z0-9_,-]", "", str(POLICY_APPROVED or "").lower()).split(",") if n][:10]
+    mode, approved, error = requested or "free-only", [], None
+    if mode == "free-only":
+        if names:
+            error = "approved_upgrades_ignored_in_free_only"
+    elif mode == "legacy-race":
+        approved = list(UPGRADE_LANES)
+    elif mode == "approved-upgrades":
+        unknown = [n for n in names if n not in UPGRADE_LANES]
+        if unknown or not names:
+            mode, error = "free-only", "invalid_policy: approved-upgrades needs known upgrade lanes " + ",".join(UPGRADE_LANES)
+        else:
+            approved = list(dict.fromkeys(names))
+    else:
+        mode, error = "free-only", "invalid_policy: unknown mode; expected " + "|".join(POLICY_MODES)
+    return {"schema": POLICY_SCHEMA, "mode": mode, "approved_upgrades": approved,
+            "source": "operator" if requested else "default", "error": error}
+
+
+def lane_allowed(lane: str, pol: dict | None = None) -> bool:
+    if LANES.get(lane, {}).get("class") == "free":
+        return True
+    return lane in (pol or provider_policy())["approved_upgrades"]
+
+
+def require_approved(lane: str) -> None:
+    """Defence in depth: every upgrade-lane request function calls this before touching the network."""
+    if not lane_allowed(lane):
+        raise PolicyBlocked(lane + " is not approved by the search provider policy")
+
 
 def configuration() -> dict:
+    pol = provider_policy()
     providers = {"searxng": bool(SEARXNG_URL), "socks": bool(SOCKS), "firecrawl_cloud": bool(FC_CLOUD_KEY),
                  "brightdata": bool(BD_TOKEN), "firecrawl_router": bool(FIRECRAWL_URL),
                  "tinfoil": bool(llm())}
-    web = any(providers[k] for k in ("searxng", "socks", "firecrawl_cloud", "brightdata", "firecrawl_router"))
-    capabilities = {"web": web, "images": bool(SEARXNG_URL or SOCKS or BD_TOKEN), "overview": bool(web and llm())}
+    usable = {k: providers[k] and lane_allowed(k, pol) for k in LANES}
+    web = any(usable[k] for k in LANES if "web" in LANES[k]["capabilities"])
+    images = any(usable[k] for k in LANES if "images" in LANES[k]["capabilities"])
+    capabilities = {"web": web, "images": images, "overview": bool(web and llm())}
+    blocked = [k for k in UPGRADE_LANES if providers[k] and not usable[k]]
     return {"state": "configured" if web else "setup_required", "capabilities": capabilities,
-            "providers": providers, "setup": "SETUP.md", "requirements": "setup.json",
+            "providers": providers, "usable": usable,
+            "policy": {**pol, "blocked_configured": blocked,
+                       "lanes": {k: {"class": v["class"], "data": v["data"]} for k, v in LANES.items()},
+                       "overview_inference": "separate owner switch (overview-provider); not governed by this policy"},
+            "setup": "SETUP.md", "requirements": "setup.json",
             "notice": "Configured means settings are present, not that providers are reachable."}
 
 
 def setup_error(capability: str) -> dict:
-    return {"error": "setup_required", "capability": capability,
-            "message": f"Configure {capability} providers using SETUP.md. No keys ship with Search.",
-            "configuration": configuration()}
+    cfg = configuration()
+    message = f"Configure {capability} providers using SETUP.md. No keys ship with Search."
+    if cfg["policy"]["blocked_configured"]:
+        message += (" Configured paid/operator providers are not approved by the search provider policy"
+                    " (" + ", ".join(cfg["policy"]["blocked_configured"]) + "); only the owner can approve them.")
+    return {"error": "setup_required", "capability": capability, "message": message, "configuration": cfg}
 
 
 def _cloud(q: str) -> list[dict]:
     """Firecrawl Cloud search: consistently ~1.5-3 s, 2 credits a query (already-paid plan)."""
+    require_approved("firecrawl_cloud")
     if not FC_CLOUD_KEY:
         raise RuntimeError("no firecrawl cloud key")
     req = urllib.request.Request(FC_CLOUD_URL + "/v2/search", data=json.dumps({"query": q, "limit": 8}).encode(),
@@ -431,7 +515,12 @@ def _ddg(q: str) -> list[dict]:
 def web_search(q: str) -> dict:
     """Speed first: DuckDuckGo (free, ~1 s) gets a 1.2 s head start, then Firecrawl Cloud (~1.5 s, paid) joins;
     the first relevant batch wins.
-    Google SERP (Bright Data, 2-40 s) and the local lane only join if both fast lanes fail."""
+    Google SERP (Bright Data, 2-40 s) and the local lane only join if both fast lanes fail.
+    Upgrade lanes join only when provider_policy() approves them; free-only never starts one."""
+    pol = provider_policy()
+    cloud_ok = bool(FC_CLOUD_KEY) and lane_allowed("firecrawl_cloud", pol)
+    serp_ok = bool(BD_TOKEN) and lane_allowed("brightdata", pol)
+    local_ok = bool(FIRECRAWL_URL) and lane_allowed("firecrawl_router", pol)
     started = time.time()
     futs = {}
     if SEARXNG_URL:
@@ -443,13 +532,13 @@ def web_search(q: str) -> dict:
     cloud_started = slow_started = False
     while time.time() - started < 30:
         if not cloud_started and (time.time() >= cloud_at or not futs):
-            if FC_CLOUD_KEY:
+            if cloud_ok:
                 futs[POOL.submit(_cloud, q)] = "cloud"
             cloud_started = True
         if not futs and not slow_started:
-            if BD_TOKEN:
+            if serp_ok:
                 futs[POOL.submit(_serp, q)] = "serp"
-            if FIRECRAWL_URL:
+            if local_ok:
                 futs[POOL.submit(_local, q)] = "local"
             slow_started = True
         if not futs:
@@ -463,12 +552,12 @@ def web_search(q: str) -> dict:
                 continue
             if lane in ("searxng", "ddg", "local") and not _relevant(q, rows):
                 continue
-            return _finish(q, rows, lane)
+            return {**_finish(q, rows, lane), "policy": pol["mode"]}
         fast_left = not cloud_started or any(v in ("searxng", "ddg", "cloud") for v in futs.values())
         if not slow_started and (not fast_left or time.time() - started > 6):
-            if BD_TOKEN:
+            if serp_ok:
                 futs[POOL.submit(_serp, q)] = "serp"
-            if FIRECRAWL_URL:
+            if local_ok:
                 futs[POOL.submit(_local, q)] = "local"
             slow_started = True
     raise RuntimeError("web providers unavailable or returned no results")
@@ -727,9 +816,9 @@ class H(BaseHTTPRequestHandler):
             return self._send(202, b"", "application/json")
         tools = [{"name": "search_status", "description": "Read provider configuration (no secrets).", "inputSchema": {"type": "object", "properties": {}}}]
         for kind in ("web", "images", "overview"):
-            tools.append({"name": "search_" + kind, "description": "Search " + kind + "; may consume configured provider credits.", "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
+            tools.append({"name": "search_" + kind, "description": "Search " + kind + ". Free-only by default (bundled SearXNG); paid providers run only if the owner approved them (see search_status)." + (" Overview answers use the owner's separate AI-overview switch." if kind == "overview" else ""), "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "minLength": 1, "maxLength": 300}}, "required": ["q"], "additionalProperties": False}})
         if method == "initialize":
-            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.3.1"}}
+            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "wizard-search", "version": "0.3.2"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -845,7 +934,7 @@ class H(BaseHTTPRequestHandler):
         q = norm_q((qs.get("q") or [""])[0])
         try:
             if path == "/api/health":
-                return self._json(200, {"ok": True, "version": "0.3.1", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
+                return self._json(200, {"ok": True, "version": "0.3.2", "revision": os.environ.get("WIZARD_SEARCH_REVISION", "development"), **configuration()})
             if path == "/api/overview-provider":
                 return self._json(200, overview_provider())
             if path == "/api/config":
@@ -927,4 +1016,8 @@ if __name__ == "__main__":
     bind = os.environ.get("WIZARD_SEARCH_BIND", "127.0.0.1")
     srv = ThreadingHTTPServer((bind, PORT), H)
     print(f"wizard-search on {bind}:{PORT}{PREFIX}/", flush=True)
+    _cfg = configuration()["policy"]  # names only, never values
+    print(f"wizard-search provider policy: {_cfg['mode']} ({_cfg['source']})"
+          + (f"; not approved, will not run: {', '.join(_cfg['blocked_configured'])}" if _cfg["blocked_configured"] else "")
+          + (f"; {_cfg['error']}" if _cfg["error"] else ""), flush=True)
     srv.serve_forever()

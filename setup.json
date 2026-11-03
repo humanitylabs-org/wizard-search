@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "app": "wizard-search",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "runtime": {
     "python": ">=3.12",
     "commands": [
@@ -23,6 +23,16 @@
     },
     "WIZARD_SEARCH_SOCKS": {
       "description": "SOCKS egress URL",
+      "default": "",
+      "secret": false
+    },
+    "WIZARD_SEARCH_PROVIDER_POLICY": {
+      "description": "free-only (default; paid/operator lanes never run even with keys present), approved-upgrades (only lanes named in WIZARD_SEARCH_APPROVED_UPGRADES), or legacy-race (explicit opt-in to 0.3.1 racing of every configured lane). Invalid values fail closed to free-only.",
+      "default": "free-only",
+      "secret": false
+    },
+    "WIZARD_SEARCH_APPROVED_UPGRADES": {
+      "description": "Comma list of approved upgrade lanes for approved-upgrades: firecrawl_cloud, brightdata, firecrawl_router",
       "default": "",
       "secret": false
     },
@@ -95,17 +105,21 @@
   "capabilities": {
     "web": {
       "any_of": [
+        "SEARXNG_URL",
         "WIZARD_SEARCH_SOCKS",
         "FIRECRAWL_CLOUD_API_KEY",
         "BRIGHTDATA_API_TOKEN",
         "FIRECRAWL_ROUTER_URL"
-      ]
+      ],
+      "policy": "FIRECRAWL_CLOUD_API_KEY, BRIGHTDATA_API_TOKEN and FIRECRAWL_ROUTER_URL count only when WIZARD_SEARCH_PROVIDER_POLICY approves them"
     },
     "images": {
       "any_of": [
+        "SEARXNG_URL",
         "WIZARD_SEARCH_SOCKS",
         "BRIGHTDATA_API_TOKEN"
-      ]
+      ],
+      "policy": "BRIGHTDATA_API_TOKEN counts only when WIZARD_SEARCH_PROVIDER_POLICY approves brightdata"
     },
     "overview": {
       "requires_capability": "web",

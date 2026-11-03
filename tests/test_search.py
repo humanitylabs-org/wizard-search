@@ -52,7 +52,13 @@ class SearchTests(unittest.TestCase):
             self.assertEqual((code, data['error']), (503, 'setup_required'))
 
     def test_configuration_no_secrets(self):
+        # A paid key alone is not approval: free-only (default) keeps it unusable and says so.
         with patch.object(s, 'FC_CLOUD_KEY', 'dummy-secret'):
+            code, data = self.request('/api/config')
+            self.assertEqual(data['state'], 'setup_required')
+            self.assertEqual(data['policy']['blocked_configured'], ['firecrawl_cloud'])
+            self.assertNotIn('dummy-secret', json.dumps(data))
+        with patch.object(s, 'FC_CLOUD_KEY', 'dummy-secret'), patch.object(s, 'POLICY_MODE', 'legacy-race'):
             code, data = self.request('/api/config')
             self.assertEqual(data['state'], 'configured')
             self.assertTrue(data['capabilities']['web'])
@@ -136,7 +142,8 @@ class SearchTests(unittest.TestCase):
             fake.shutdown(); fake.server_close(); tmp.cleanup(); s.TINFOIL_PROBE['at'] = 0
 
     def test_provider_failure_not_empty_success(self):
-        with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'):
+        with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'), \
+                patch.object(s, 'POLICY_MODE', 'approved-upgrades'), patch.object(s, 'POLICY_APPROVED', 'firecrawl_router'):
             code, data = self.request('/api/web?q=provider-failure-test')
             self.assertEqual(code, 502)
             self.assertIn('error', data)
@@ -146,7 +153,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(data['result']['serverInfo']['name'], 'wizard-search')
         _, data = self.request('/mcp', {'jsonrpc':'2.0','id':2,'method':'tools/list'})
-        self.assertEqual(len(data['result']['tools']), 4)
+        self.assertEqual([t['name'] for t in data['result']['tools']], ['search_status', 'search_web', 'search_images', 'search_overview'])
         _, data = self.request('/mcp', {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'search_web','arguments':{'q':'test'}}})
         self.assertTrue(data['result']['isError'])
         self.assertEqual(json.loads(data['result']['content'][0]['text'])['error'], 'setup_required')

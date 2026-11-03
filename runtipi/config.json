@@ -4,7 +4,7 @@
   "wizard_type": "service",
   "available": true,
   "short_desc": "Free private web and image search, ready out of the box.",
-  "description": "Search works on install with a bundled SearXNG metasearch engine (free, no account). Have the Tinfoil app? Turn on private AI overviews from the Search page. Optionally add Firecrawl, Bright Data or a SOCKS egress for extra lanes. No history is saved.",
+  "description": "Search works on install with a bundled SearXNG metasearch engine (free, no account). Have the Tinfoil app? Turn on private AI overviews from the Search page. Free-only by default: optional Firecrawl or Bright Data lanes run only after the owner approves them in the provider policy; a key alone never spends. No history is saved.",
   "author": "Humanity Labs",
   "source": "https://github.com/humanitylabs-org/wizard-search",
   "port": 9288,
@@ -12,7 +12,7 @@
     "utilities"
   ],
   "tipi_version": 2,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "exposable": false,
   "supported_architectures": [
     "amd64",
@@ -35,6 +35,22 @@
       "type": "text",
       "label": "SOCKS egress URL",
       "env_variable": "WIZARD_SEARCH_SOCKS",
+      "required": false,
+      "default": ""
+    },
+    {
+      "type": "text",
+      "label": "Search provider policy: free-only (default), approved-upgrades, or legacy-race",
+      "env_variable": "WIZARD_SEARCH_PROVIDER_POLICY",
+      "required": false,
+      "default": "free-only",
+      "regex": "^(free-only|approved-upgrades|legacy-race)?$",
+      "pattern_error": "Use free-only, approved-upgrades or legacy-race"
+    },
+    {
+      "type": "text",
+      "label": "Approved paid/operator lanes for approved-upgrades (comma list: firecrawl_cloud, brightdata, firecrawl_router)",
+      "env_variable": "WIZARD_SEARCH_APPROVED_UPGRADES",
       "required": false,
       "default": ""
     },
