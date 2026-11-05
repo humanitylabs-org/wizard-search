@@ -6,8 +6,9 @@
   const BASE = location.pathname.replace(/[^/]*$/, '');
   const api = (p, q) => fetch(`${BASE}api/${p}?q=${encodeURIComponent(q)}`, { credentials: 'same-origin' }).then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(new Error(j.error || r.status))));
   const S = { q: '', tab: 'all', images: null, web: null, ov: null, seq: 0 };
-  // Search owns its result viewer; shared Back owns the exit boundary.
-  const shellViewer = () => null;
+  // Preserve the live shell viewer (zoom/swipe/save/share) through its public API.
+  const shellViewer = () => window.WizardApp?.hosted && window.WizardApp?.media?.view
+    ? { open: (items, i) => WizardApp.media.view(items, i) } : null;
   const setupText = 'Setup required — configure this capability using the setup instructions above.';
   const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
     S.config = d;
@@ -22,7 +23,7 @@
 
   // Optional AI overviews: only offered when the Tinfoil app is on this box. Turning on asks Tinfoil (sibling app,
   // same origin, owner's page) for a Search-only token and hands it to Search's server; Turn off revokes it.
-  const TINFOIL = new URL('../wizard-tinfoil/', location.href).pathname;
+  const TINFOIL = '/wizard-tinfoil/';
   const post = (url, body) => fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Wizard-Request': '1' }, body: JSON.stringify(body) })
     .then(r => r.json().then(j => r.ok ? j : Promise.reject(new Error(j.error || r.status))));
   function paintAi(p) {
@@ -38,6 +39,7 @@
   const aiReady = configReady.then(() => fetch(`${BASE}api/overview-provider`).then(r => r.json())).then(paintAi).catch(() => {});
   $('#ai-btn').addEventListener('click', async () => {
     const b = $('#ai-btn'), on = b.getAttribute('aria-pressed') === 'true'; b.disabled = true;
+    $('#ai-sub').textContent = on ? 'Turning private overviews off…' : 'Connecting private overviews…';
     try {
       if (on) {
         paintAi(await post(`${BASE}api/overview-provider`, { provider: 'off' }));
@@ -64,12 +66,15 @@
     window.scrollTo(0, 0);
   }
   async function run(q, t) {
-    await configReady;
     q = String(q || '').trim(); if (!q) return;
+    S.es?.close();
     S.q = q; S.images = S.web = S.ov = null; S.seq++;
     $('#q').value = q; $('#clear').hidden = false; $('#q').blur();
-    if (S.config?.capabilities.overview) $('#ov').innerHTML = shimmer(); $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
-    tab(t || S.tab);
+    $('#ov').innerHTML = shimmer(); $('#web').innerHTML = '<li class="note">Finding web results…</li>'; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
+    tab(t || S.tab, false);
+    const seq = S.seq;
+    await aiReady;
+    if (seq === S.seq) { if (!S.config?.capabilities.overview) $('#ov').innerHTML = ''; ensure(); }
   }
   function ensure() {
     const seq = S.seq, q = S.q;
@@ -109,7 +114,7 @@
   function paintWeb() {
     const d = S.web, el = $('#web');
     if (!d || d === 'loading') return;
-    if (!d.results.length) { el.innerHTML = `<li class="note">${d.error === 'setup_required' ? setupText : d.error ? 'Web provider unavailable or returned no results. Check provider health and retry.' : 'No web results.'}</li>`; return; }
+    if (!d.results.length) { el.innerHTML = `<li class="note">${d.error === 'setup_required' ? setupText : d.error ? 'Web results unavailable right now.' : 'No web results.'}</li>`; return; }
     el.innerHTML = d.results.map(r => `<li><div class="host"><img src="https://icons.duckduckgo.com/ip3/${esc(r.host)}.ico" alt="" loading="lazy" onerror="this.style.visibility='hidden'">${esc(r.host)}</div><a class="t" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a><p class="s">${esc(r.snippet)}</p></li>`).join('');
   }
   function paintImages() {
@@ -137,6 +142,7 @@
   $('#clear').addEventListener('click', () => { $('#q').value = ''; $('#clear').hidden = true; $('#q').focus(); });
   document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) tab(b.dataset.t); });
   document.addEventListener('click', e => {
+    if (e.target === $('#lb')) { $('#lb').hidden = true; return; }
     const more = e.target.closest('[data-more]'); if (more) return tab('images');
     const t = e.target.closest('[data-i]'); if (t) { e.preventDefault(); const V = shellViewer(); if (V && V.isOpen && V.isOpen()) return; view(+t.dataset.i); } // already open: the finger lifting off a long-press
     if (e.target.closest('[data-lb="close"]')) $('#lb').hidden = true;
@@ -155,7 +161,8 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.3.1' });
+  WizardApp.ready({ name: 'Search', version: '0.3.3' });
+  WizardApp.theme?.onChange(() => { /* Appearance tokens are applied live by the shared client. */ });
 
   WizardApp.back.register({
     canGoBack: () => !$('#lb').hidden || S.tab !== 'all',

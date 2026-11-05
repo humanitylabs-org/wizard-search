@@ -50,11 +50,12 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 
 TINFOIL_KEY = os.environ.get("TINFOIL_API_KEY", "")
+TINFOIL_KEY_FILE = os.environ.get("TINFOIL_API_KEY_FILE", "")
 # Optional AI overviews through the Tinfoil app on this box: the owner turns them on from Search's page, Tinfoil
 # issues Search its own box-only token, and Search keeps it in DATA_DIR (0600). TINFOIL_PROXY_URL (operator
 # setting) still wins when set. Search never sees the Tinfoil API key.
 DATA_DIR = Path(os.environ.get("WIZARD_SEARCH_DATA", "/data"))
-TINFOIL_APP = os.environ.get("WIZARD_SEARCH_TINFOIL_APP", "http://wizard-tinfoil:18804").rstrip("/")
+TINFOIL_APP = (os.environ.get("WIZARD_SEARCH_TINFOIL_APP") or "http://wizard-tinfoil:18804").rstrip("/")
 LINK_FILE = "overview-provider.json"
 
 
@@ -76,7 +77,16 @@ def _pick(models: list, *want: str) -> str:
 def llm() -> dict | None:
     """Where AI calls go right now: the operator's proxy, the linked Tinfoil app, or nowhere."""
     if LLM_URL:
-        return {"via": "proxy", "url": LLM_URL, "key": TINFOIL_KEY, "model": LLM_MODEL, "translate": TRANSLATE_MODEL,
+        # Optional box-local credential for the installed Tinfoil app's /v1 API. Never an owner key in a recipe.
+        key = TINFOIL_KEY
+        if TINFOIL_KEY_FILE:
+            try:
+                key = Path(TINFOIL_KEY_FILE).read_text().strip()
+                if not key or len(key) > 4096:
+                    return None
+            except OSError:
+                return None
+        return {"via": "proxy", "url": LLM_URL, "key": key, "model": LLM_MODEL, "translate": TRANSLATE_MODEL,
                 "fallback": TRANSLATE_FALLBACK, "vision": VISION_MODEL}
     link = _link()
     if not link:
