@@ -27,8 +27,10 @@ def write(p,d):p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dump
 def refresh():
  env={**os.environ,'PYTHONPATH':str(a.wam_root),'PYTHONDONTWRITEBYTECODE':'1','WIZARD_OS_HOME':str(a.os_home),'RUNTIPI_ROOT':str(a.runtipi)}
  run(['/usr/bin/python3','-m','wam','apps','--json'],cwd=a.wam_root,env=env,stdout=subprocess.DEVNULL)
-def lifecycle(method,action,body=None):
- result=rt.call(method,'/app-lifecycle/'+urn+'/'+action,body);rt.wait(result['requestId'])
+def lifecycle(action,body,expected_image,expected_revision):
+ from release_lifecycle import submit_and_verify
+ return submit_and_verify(rt,urn,action,body,release/('lifecycle-'+action+'.json'),
+                          expected_image,expected_revision,container,'http://127.0.0.1:19289/api/health',timeout=90)
 def form(row):
  cfg=row['config'];cfg=json.loads(cfg) if isinstance(cfg,str) else dict(cfg or {})
  for k in ['port','exposed','exposedLocal','openPort','domain','isVisibleOnGuestDashboard','enableAuth','localSubdomain','maxBackups']:
@@ -83,7 +85,7 @@ if a.action=='package':
  config=json.loads((root/'runtipi/config.json').read_text());config['id']='search-preview';(repo/'config.json').write_text(json.dumps(config,indent=2)+'\n')
  from wam.builder import source_hash
  source=json.loads((repo/'.wizard-source').read_text());source.update(upstream_repo='humanitylabs-org/wizard-search',upstream_commit=sha,source_hash=source_hash(root));write(repo/'.wizard-source',source);(repo/'.wizard-commit').write_text(sha+'\n')
- lifecycle('PATCH','update',{'performBackup':True});refresh()
+ lifecycle('update',{'performBackup':True},identity['effective_image_id'],image_sha);refresh()
  assert obj('http://127.0.0.1:19289/api/overview-provider')['model']=='gpt-oss-120b'
  provider=obj('http://127.0.0.1:19289/api/config');assert provider['capabilities']['overview'] and provider['capabilities']['web'] and provider['capabilities']['images']
  write(release/'parent-package-verification.json',{'sha':sha,'candidate_port':19289,'private_proxy_bridge':True,'model':'gpt-oss-120b','cutover':False,'image_identity':identity})
@@ -124,7 +126,10 @@ else:
   else:target.unlink(missing_ok=True)
 
  run(['systemctl','--user','daemon-reload'])
- lifecycle('PATCH','update-config',form(json.loads((backup/'lifecycle-row.json').read_text())))
+ old_compose=yaml.safe_load((repo/'docker-compose.yml').read_text())
+ old_image=old_compose['services']['search-preview']['image']
+ old_id=json.loads(call(['docker','image','inspect',old_image]))[0]['Id']
+ lifecycle('update-config',form(json.loads((backup/'lifecycle-row.json').read_text())),old_id,'e429987349b87d0c6d4973fb482c604765e2434b')
  run(['docker','exec',container,'rm','-f','/data/private-proxy-token'])
  refresh();run(['systemctl','--user','restart','private-app-route-adapter.service']);run(['systemctl','--user','start','wizard-search.service'])
  actual=json.loads(call(['docker','inspect',container]))[0]['Config']['Labels']['org.opencontainers.image.revision'];assert actual=='e429987349b87d0c6d4973fb482c604765e2434b'
