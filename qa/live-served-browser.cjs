@@ -13,7 +13,7 @@ const synthetic={
  '/wizard/v1/agents':{agents:[]},'/wizard/v1/agent-options':{agents:[]},'/wizard/v1/app-bindings':{bindings:{}},'/wizard/v1/pages':{pages:[]},
  '/wizard-os-home/store-data/wizard/v1/app-logos':{logos:{}}
 };
-async function policy(route,report){
+async function policy(route,report,pins){
  const req=route.request(),u=new URL(req.url());
  if(['data:','blob:'].includes(u.protocol))return route.continue();
  if(u.origin!==new URL(base).origin){report.blocked.push({path:u.origin+u.pathname,method:req.method()});return route.abort();}
@@ -36,7 +36,15 @@ async function policy(route,report){
  if(synthetic[p])return route.fulfill({json:synthetic[p]});
  // Static allowlist excludes ALL store-data and API paths, even .json lookalikes.
  if(req.method()==='GET'&&p.startsWith('/wizard-os-home/')&&!p.includes('/store-data/')&&!p.includes('/api/')&&
-    (p==='/wizard-os-home/'||/\.(?:html|js|css|svg|png|webp|ico|woff2?|ttf|json)$/.test(p)))return route.continue();
+    (p==='/wizard-os-home/'||/\.(?:html|js|css|svg|png|webp|ico|woff2?|ttf|json)$/.test(p))){
+  if(pins?.public_sha256[p]){
+   const response=await route.fetch(),body=await response.body(),sha256=hash(body);
+   assert.equal(response.status(),200);assert.equal(sha256,pins.public_sha256[p],p+' drift');
+   report.static.push({path:p,status:response.status(),sha256,resourceType:req.resourceType(),proof:'unmodified actual upstream bytes fulfilled to this request'});
+   return route.fulfill({response,body});
+  }
+  return route.continue();
+ }
  report.blocked.push({path:p,method:req.method()});
  // Empty synthetic body, never fetch unrelated owner histories/accounts/agents.
  return route.fulfill({status:200,json:{}});
@@ -52,14 +60,19 @@ async function main(){
    const context=await browser.newContext({viewport,isMobile:shell==='phone',hasTouch:shell==='phone',serviceWorkers:'block'});
    const report={shell,viewport,status:'running',blocked:[],static:[],skins:[],errors:[]};results.push(report);save();
    try{
-    await context.route('**/*',route=>policy(route,report));
+    await context.route('**/*',async route=>{
+     const req=route.request(),u=new URL(req.url());
+     if(u.origin===new URL(base).origin&&req.method()==='GET'&&u.pathname.startsWith(appPath)&&pins.public_sha256[u.pathname]){
+      const response=await route.fetch(),body=await response.body(),sha256=hash(body);
+      assert.equal(response.status(),200);assert.equal(sha256,pins.public_sha256[u.pathname],u.pathname+' drift');
+      report.static.push({path:u.pathname,status:response.status(),sha256,resourceType:req.resourceType(),proof:'unmodified actual upstream bytes fulfilled to this request'});
+      return route.fulfill({response,body});
+     }
+     return policy(route,report,pins);
+    });
     await context.addInitScript(()=>{localStorage.setItem('wos.coached','true');localStorage.setItem('wos.tour.done','1');});
     const page=await context.newPage();page.setDefaultTimeout(20000);
-    const bodyTasks=[];
-    page.on('response',r=>{const u=new URL(r.url());if(u.origin===new URL(base).origin&&r.request().method()==='GET'&&
-      (u.pathname.startsWith('/wizard-os-home/')||u.pathname.startsWith(appPath))&&!u.pathname.includes('/api/')&&!u.pathname.includes('/store-data/')){
-       bodyTasks.push((async()=>{const body=await r.body(),sha256=hash(body);report.static.push({path:u.pathname,status:r.status(),sha256,resourceType:r.request().resourceType()});if(pins.public_sha256[u.pathname])assert.equal(sha256,pins.public_sha256[u.pathname],u.pathname+' drift');})().catch(e=>report.errors.push(String(e))));
-    }});
+
     const streamEvents=[];let streamStart=0;
     page.on('request',req=>{if(new URL(req.url()).pathname===appPath+'api/overview-stream')streamStart=Date.now();});
     // Observe native EventSource messages using page instrumentation, not response fulfillment/replay.
@@ -75,7 +88,7 @@ async function main(){
     await frame.waitForFunction(()=>document.querySelector('#ai-sub')?.textContent.includes('set up by your server admin'));
     assert.equal(await frame.locator('#ai-btn').isVisible(),false,'No provider-setting mutations in QA');
     // New synthetic question per viewport/job; no cached-answer replay qualifies.
-    const query=shell==='phone'?'Python pathlib Path read_text official documentation':'Python pathlib Path write_text official documentation';
+    const query=shell==='phone'?'Python json loads official library reference':'Python itertools chain official library reference';
     await frame.locator('#q').fill(query);await frame.locator('#q').press('Enter');
     await frame.locator('#web li').first().waitFor({state:'visible',timeout:60000});
     await frame.waitForFunction(()=>window.__qaStream?.some(e=>e.event==='done'),null,{timeout:90000});
@@ -98,7 +111,7 @@ async function main(){
      assert.equal(appearance.skin,id);
      const file=`actual-${shell}-${id}.png`;await page.screenshot({path:path.join(out,file)});report.skins.push({id,file,appearance});save();
     }
-    await Promise.all(bodyTasks);assert.equal(report.errors.length,0,report.errors.join('\n'));
+    assert.equal(report.errors.length,0,report.errors.join('\n'));
     const required=[shell==='desktop'?'/wizard-os-home/desktop.html':'/wizard-os-home/','/wizard-os-home/core/app-client.js',appPath,appPath+'app.js'];
     for(const p of required)assert(report.static.some(r=>r.path===p&&r.status===200),'Missing actual body proof '+p);
     report.status=report.voiceAdmission?'passed':'blocked_voice_admission';save();
