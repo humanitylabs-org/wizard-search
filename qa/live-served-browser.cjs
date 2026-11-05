@@ -88,7 +88,7 @@ async function main(){
     await frame.waitForFunction(()=>document.querySelector('#ai-sub')?.textContent.includes('set up by your server admin'));
     assert.equal(await frame.locator('#ai-btn').isVisible(),false,'No provider-setting mutations in QA');
     // New synthetic question per viewport/job; no cached-answer replay qualifies.
-    const query=shell==='phone'?'Python json loads official library reference':'Python itertools chain official library reference';
+    const query=shell==='phone'?(process.env.QA_PHONE_QUERY||'Python json loads official library reference'):(process.env.QA_DESKTOP_QUERY||'Python itertools chain official library reference');
     await frame.locator('#q').fill(query);await frame.locator('#q').press('Enter');
     await frame.locator('#web li').first().waitFor({state:'visible',timeout:60000});
     await frame.waitForFunction(()=>window.__qaStream?.some(e=>e.event==='done'),null,{timeout:90000});

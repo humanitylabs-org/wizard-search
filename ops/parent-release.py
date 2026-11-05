@@ -2,7 +2,7 @@
 """PARENT ONLY. Guarded package -> verify -> cutover -> retire; one-command rollback.
 Run --help and read PARENT-RELEASE.md. No action runs without --execute. Never edits apps.json.
 """
-import argparse,hashlib,json,os,pathlib,runpy,secrets,shutil,subprocess,sys,urllib.request,time
+import argparse,hashlib,json,os,pathlib,runpy,secrets,shutil,subprocess,sys,urllib.request,urllib.error,time
 P=pathlib.Path
 p=argparse.ArgumentParser()
 p.add_argument('action',choices=['package','cutover','retire-legacy','rollback'])
@@ -23,7 +23,15 @@ repo=a.runtipi/'repos/wizardapps/apps/search-preview';installed=a.runtipi/'apps/
 service=P.home()/'.config/systemd/user/wizard-search-private-proxy.service'
 def run(argv,**kw):return subprocess.run(argv,check=True,**kw)
 def call(argv,**kw):return subprocess.check_output(argv,**kw)
-def obj(url):return json.load(urllib.request.urlopen(url,timeout=120))
+def obj(url):
+ # A successful systemd restart can precede its listener. Retry only read-only
+ # connection-refused observations, never lifecycle submissions or mutations.
+ for attempt in range(30):
+  try:return json.load(urllib.request.urlopen(url,timeout=120))
+  except urllib.error.URLError as exc:
+   if not isinstance(exc.reason,ConnectionRefusedError) or attempt==29:raise
+   time.sleep(.1)
+ raise AssertionError('Unreachable metadata retry exhaustion')
 def write(p,d):p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(d,indent=2)+'\n')
 def refresh():
  env={**os.environ,'PYTHONPATH':str(a.wam_root),'PYTHONDONTWRITEBYTECODE':'1','WIZARD_OS_HOME':str(a.os_home),'RUNTIPI_ROOT':str(a.runtipi)}
