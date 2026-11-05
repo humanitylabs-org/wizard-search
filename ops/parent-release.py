@@ -38,6 +38,12 @@ if a.action=='package':
  assert manifest['tests']=='passed' and manifest['production_activated'] is False
  # Do not accept an inherited voice-routing regression merely because the UI admits voice.
  assert '"receives_voice_input": w.get("receives_voice_input") is True' in (a.wam_root/'wam/registry.py').read_text(), 'Parent must ship the reviewed registry voice projection patch first.'
+ image_sha=manifest.get('image_source_sha',sha)
+ if image_sha!=sha:
+  assert manifest.get('runtime_bytes_identical') is True
+  hashes=manifest['runtime_file_sha256']
+  expected={'app/Dockerfile','.dockerignore','server.py','setup.json','openapi.json','SETUP.md','runtipi/docker-compose.yml'}|{str(f.relative_to(root)) for f in (root/'web').rglob('*') if f.is_file()}
+  assert set(hashes)==expected and all(hashlib.sha256((root/name).read_bytes()).hexdigest()==value for name,value in hashes.items()),'Reused image runtime inputs differ from candidate'
  assert not backup.exists(),'Backup already exists; inspect it or use rollback. Never overwrite rollback material.'
  archive=release/manifest['image_archive'];assert hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()==manifest['image_archive_sha256']
  live=json.loads(call(['docker','inspect',container]))[0]
@@ -56,7 +62,7 @@ if a.action=='package':
  os.chmod(backup/'search-data.tar',0o600)
  run(['docker','load','-i',str(archive)],stdout=subprocess.DEVNULL)
  img=json.loads(call(['docker','image','inspect',manifest['image']]))[0]
- assert img['Id']==manifest['image_id'] and img['Config']['Labels']['org.opencontainers.image.revision']==sha
+ assert img['Id']==manifest['image_id'] and img['Config']['Labels']['org.opencontainers.image.revision']==image_sha
  gateway=next(v['Gateway'] for k,v in live['NetworkSettings']['Networks'].items() if 'search-preview' in k and v.get('Gateway'))
  token=secrets.token_urlsafe(48);tokenfile=backup/'proxy-token';tokenfile.write_text(token);os.chmod(tokenfile,0o600)
  shutil.copy2(root/'ops/private-proxy-bridge.py',backup/'private-proxy-bridge.py')
