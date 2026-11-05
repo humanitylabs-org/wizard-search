@@ -16,6 +16,46 @@ spec.loader.exec_module(activation)
 
 
 class OperatorContracts(unittest.TestCase):
+    def test_dropin_order_uses_dynamic_lexicographic_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            conflicting = directory / 'connection-fork-registry.conf'
+            conflicting.write_text('[Service]\nWorkingDirectory=/synthetic/baseline\nEnvironment="PYTHONPATH=/synthetic/baseline"\n')
+            with self.assertRaisesRegex(ValueError, 'connection-fork-registry.conf'):
+                activation.check_dropin_order(directory / '99-search-voice.conf', str(conflicting))
+            dropin = directory / activation.DROPIN_NAME
+            self.assertIn(str(conflicting), activation.check_dropin_order(dropin, str(conflicting)))
+            # Newer not-yet-loaded local overlay must fail closed too.
+            later = directory / 'zzzzz-conflicting-cwd.conf'
+            later.write_text('[Service]\nWorkingDirectory=/synthetic/other\n')
+            with self.assertRaisesRegex(ValueError, later.name):
+                activation.check_dropin_order(dropin, str(conflicting))
+            later.unlink()
+            # Vendor/control-plane overlays outside the local directory also count.
+            with self.assertRaisesRegex(ValueError, 'zzzzzz-vendor.conf'):
+                activation.check_dropin_order(dropin, '/synthetic/vendor/zzzzzz-vendor.conf')
+
+    def test_activate_rejects_order_conflict_before_any_write(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            args = ['activate.py', 'activate', '--execute', '--os-home', str(root / 'os'),
+                    '--api-baseline', str(root / 'baseline'), '--api-release', str(root / activation.HOST_SHA),
+                    '--backup', str(root / 'backup'), '--source-archive', str(root / 'source.tar'),
+                    '--builder-source', str(root / 'builder')]
+            properties = {'WorkingDirectory': str(root / 'baseline'), 'ExecStart': '/usr/bin/python3 -m wam serve',
+                          'DropInPaths': '/synthetic/vendor/zzzzzz-override.conf'}
+            def digest(path):
+                return activation.ARCHIVE_SHA if path.name == 'source.tar' else 'baseline-registry'
+            with patch('sys.argv', args), patch.object(activation.Path, 'home', return_value=root), \
+                 patch.object(activation, 'show', side_effect=lambda p: properties[p]), \
+                 patch.object(activation, 'digest', side_effect=digest), \
+                 patch.object(activation, 'pointer', return_value={'wam/registry.py': 'baseline-registry'}), \
+                 patch.object(activation, 'files', return_value={}), patch.object(activation, 'validate_delta'), \
+                 patch.object(activation, 'run', side_effect=AssertionError('execution forbidden')):
+                with self.assertRaisesRegex(ValueError, 'zzzzzz-override.conf'):
+                    activation.main()
+            self.assertEqual(list(root.iterdir()), [])
+
     def test_pointer_refuses_nonlink_and_wrong_target(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)

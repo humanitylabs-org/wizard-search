@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import tarfile
 
@@ -19,6 +20,7 @@ HOST_SHA = '975fcbd37a84f0a79bd593db317f27b500a2cac6'
 ARCHIVE_SHA = '45bc08bfd924875edd81f9694b715eff37aa9175240a946a3dc8d56ff25d689b'
 REGISTRY_SHA = '26aeb059c9dc4b586cfbae0a2cbe1b068832b26ffb7ce4e3ad9104b978d0dca5'
 UNIT = 'wizard-app-manager-api.service'
+DROPIN_NAME = 'zzzz-search-voice.conf'
 
 
 def digest(path):
@@ -65,6 +67,16 @@ def show(prop):
     return subprocess.check_output(['systemctl', '--user', 'show', UNIT, '-p', prop, '--value'], text=True, timeout=15).strip()
 
 
+def check_dropin_order(dropin, loaded_paths):
+    # systemd orders drop-ins by basename, NOT the numeric prefix as a number.
+    # Include not-yet-reloaded local files as well as the effective unit's paths.
+    paths = {Path(p) for p in shlex.split(loaded_paths)} | set(dropin.parent.glob('*.conf'))
+    later = sorted(str(p) for p in paths if p != dropin and p.name >= dropin.name)
+    if later:
+        raise ValueError('Dedicated API drop-in would not be last; preserve all overlays: ' + ', '.join(later))
+    return sorted(str(p) for p in paths)
+
+
 def builder(source, home, operation, arg):
     # No Hermes home/fresh/agent mount operation is ever supplied.
     program = ('from pathlib import Path; from wam.builder_bundle import ' + operation +
@@ -87,7 +99,7 @@ def main():
         value = getattr(a, key)
         if not value.is_absolute():
             p.error(key + ' must be an absolute operator-selected path')
-    dropin = Path.home() / '.config/systemd/user' / (UNIT + '.d') / '99-search-voice.conf'
+    dropin = Path.home() / '.config/systemd/user' / (UNIT + '.d') / DROPIN_NAME
     content = '[Service]\nWorkingDirectory=' + str(a.api_release) + '\nEnvironment="PYTHONPATH=' + str(a.api_release) + '"\n'
     if any(c in str(a.api_release) for c in '\n\r"% \\'):
         p.error('API release path must have no whitespace, systemd specifiers or quoting characters')
@@ -111,6 +123,7 @@ def main():
         assert a.api_release.name == HOST_SHA, 'New release must be named with reviewed source SHA'
         assert not dropin.exists() and not dropin.is_symlink(), 'Dedicated drop-in occupied; preserve it'
         assert not a.backup.exists(), 'Never overwrite rollback material'
+        dropin_paths = check_dropin_order(dropin, show('DropInPaths'))
         # Resolve import prerequisites before any production write.
         run(['/usr/bin/python3', '-c', 'import yaml'], stdout=subprocess.DEVNULL)
         a.backup.mkdir(parents=True, mode=0o700)
@@ -124,7 +137,8 @@ def main():
             publications.append({'target': str(src), 'saved': str(saved)})
         journal = {'os_home': str(a.os_home), 'api_baseline': str(a.api_baseline),
                    'api_release': str(a.api_release), 'dropin': str(dropin), 'content': content,
-                   'publications': publications, 'production_registry_modified': False}
+                   'publications': publications, 'preceding_dropins': dropin_paths,
+                   'production_registry_modified': False}
         (a.backup / 'rollback.json').write_text(json.dumps(journal, indent=2) + '\n')
         a.api_release.mkdir(parents=True)
         with tarfile.open(a.source_archive) as archive:
@@ -139,7 +153,11 @@ def main():
         journal = json.loads((a.backup / 'rollback.json').read_text())
         for key in ['os_home', 'api_baseline', 'api_release']:
             assert str(getattr(a, key)) == journal[key], 'Rollback target mismatch'
-        assert str(dropin) == journal['dropin'] and content == journal['content']
+        # Keep the sealed v1 journal usable after the dedicated name correction.
+        saved_dropin = Path(journal['dropin'])
+        assert saved_dropin.parent == dropin.parent and saved_dropin.name in (DROPIN_NAME, '99-search-voice.conf')
+        dropin = saved_dropin
+        assert content == journal['content']
         assert Path(show('WorkingDirectory')).resolve() in (a.api_baseline.resolve(), a.api_release.resolve()), 'API cwd drift; preserve it'
         # Accept only our baseline or candidate, including partial activation.
         current = (a.os_home / 'builder/current').resolve().name

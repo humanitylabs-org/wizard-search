@@ -13,6 +13,9 @@ a=parser.parse_args()
 root=Path(__file__).resolve().parents[1]
 evidence=root/'evidence';evidence.mkdir(exist_ok=True)
 receipt={}
+subprocess.run([sys.executable,'qa/shell-host-contract-test.py','--shell',str(root/'shell-web'),
+                '--out',str(evidence/'shell-host-contract.json')],cwd=root,check=True,timeout=20,
+               env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
 subprocess.run([sys.executable,'qa/operator-contract-test.py'],cwd=root,check=True,timeout=20,
                env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1','QA_IMAGE_REUSE':str(root/'image-reuse.json')})
 for label in ('host','runtime'):
