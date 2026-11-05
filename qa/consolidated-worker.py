@@ -67,7 +67,7 @@ signal.signal(signal.SIGALRM,expired)
 signal.alarm(650)
 try:
  with (out/'unit.log').open('w') as f:run([sys.executable,'-m','unittest','discover','-s','tests','-v'],stdout=f,stderr=subprocess.STDOUT)
- run(['node','--check','web/app.js']);run([sys.executable,'tools/check_view.py'])
+ run(['node','--check','web/app.js']);run(['node','qa/voice-oracle-test.cjs']);run([sys.executable,'tools/check_view.py'])
  if not reuse:
   run(['docker','build','--build-arg','REVISION='+sha,'-f','app/Dockerfile','-t',image,'.'])
   run(['docker','save','-o',str(archive),image])

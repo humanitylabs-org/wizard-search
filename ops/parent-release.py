@@ -23,7 +23,9 @@ def run(argv,**kw):return subprocess.run(argv,check=True,**kw)
 def call(argv,**kw):return subprocess.check_output(argv,**kw)
 def obj(url):return json.load(urllib.request.urlopen(url,timeout=120))
 def write(p,d):p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(d,indent=2)+'\n')
-def refresh():run(['/usr/bin/python3','-m','wam','apps','--json'],cwd=a.wam_root,stdout=subprocess.DEVNULL)
+def refresh():
+ env={**os.environ,'PYTHONPATH':str(a.wam_root),'PYTHONDONTWRITEBYTECODE':'1','WIZARD_OS_HOME':str(a.os_home),'RUNTIPI_ROOT':str(a.runtipi)}
+ run(['/usr/bin/python3','-m','wam','apps','--json'],cwd=a.wam_root,env=env,stdout=subprocess.DEVNULL)
 def lifecycle(method,action,body=None):
  result=rt.call(method,'/app-lifecycle/'+urn+'/'+action,body);rt.wait(result['requestId'])
 def form(row):
@@ -99,7 +101,9 @@ elif a.action=='cutover':
  assert obj('http://127.0.0.1:9191/wizard-search/api/overview-provider')['model']=='gpt-oss-120b'
  write(release/'parent-cutover.json',{'verified':True,'sha':manifest['source_sha']});print('One launcher Search verified. Legacy service remains available until retire-legacy.')
 elif a.action=='retire-legacy':
- assert json.loads((release/'parent-cutover.json').read_text())['verified'] is True
+ manifest=json.loads((release/'artifact-manifest.json').read_text())
+ assert json.loads((release/'parent-cutover.json').read_text())=={'verified':True,'sha':manifest['source_sha']}
+ assert json.loads(call(['docker','inspect',container]))[0]['Image']==manifest['image_id']
  run(['systemctl','--user','stop','wizard-search.service']);assert subprocess.run(['systemctl','--user','is-active','wizard-search.service'],capture_output=True,text=True).stdout.strip()!='active'
 else:
  assert backup.exists()

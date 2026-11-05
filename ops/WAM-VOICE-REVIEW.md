@@ -28,3 +28,46 @@ After the queued WAM tests pass:
 6. Rollback: restore the API drop-in, daemon-reload/restart the same service; invoke managed `builder-bundle rollback --revision 0934bfcb8dcbe6868e49aa618d002fc3e3e11a3b7d0f731ebc02161e564a5f78`; regenerate and read back. Retain both immutable releases.
 
 No activation, route mutation, service retirement, registry regeneration, agent inspection or merge was performed while preparing this change. Static scope review is complete; queued execution/readback are not yet claimed.
+
+## Exact parent script (prepared, not run)
+
+`ops/wam-voice-activate.py` defaults to dry run. It binds the host archive to SHA256
+`45bc08bfd924875edd81f9694b715eff37aa9175240a946a3dc8d56ff25d689b`, requires the
+baseline managed pointer and full baseline file map, and admits only the exact
+`wam/registry.py` delta yielding bundle `fe78cab4e62b1abd99cdb47d09e200c93a031b07c97eaa395e57680ff24655fb`.
+It creates a new release named `975fcbd37a84f0a79bd593db317f27b500a2cac6`,
+adds only `99-search-voice.conf`, invokes the supported builder installer without
+`hermes_home`, restarts only the WAM API, and verifies process cwd and bundle bytes.
+It does **not** regenerate the registry or claim deployed voice admission.
+
+Resolve the actual baseline directory and operator storage paths before setting
+these variables. `API_RELEASE` must not exist or lie within the sealed baseline.
+The archive and builder source below are the staged public fixtures, not private
+agent source, mounts or credentials.
+
+```sh
+SOURCE=/path/to/clean/pushed/search-candidate
+PREP=/path/to/copied/verified/repair-preparation
+OS_HOME=/path/to/owner/.wizard-os
+API_BASELINE=/path/to/active/319650ad9976644c63790d505e06ce923a84b3f6
+API_RELEASE=/path/to/immutable/releases/975fcbd37a84f0a79bd593db317f27b500a2cac6
+WAM_BACKUP=/path/to/protected/new/wam-voice-backup
+/usr/bin/python3 "$SOURCE/ops/wam-voice-activate.py" activate \
+  --os-home "$OS_HOME" --api-baseline "$API_BASELINE" --api-release "$API_RELEASE" \
+  --backup "$WAM_BACKUP" --source-archive "$PREP/wam-host-source.tar" \
+  --builder-source "$PREP/wam-builder-source"
+# Above is dry-run only. Parent adds --execute after acceptance of the queued proof.
+# Rollback (also dry-run until parent adds --execute):
+/usr/bin/python3 "$SOURCE/ops/wam-voice-activate.py" rollback \
+  --os-home "$OS_HOME" --api-baseline "$API_BASELINE" --api-release "$API_RELEASE" \
+  --backup "$WAM_BACKUP"
+```
+
+Rollback verifies the current pointer is baseline/candidate and the dedicated
+drop-in has not drifted, uses supported bundle rollback, restores saved host
+launcher/Python bindings, removes only that new drop-in and verifies the old API
+process cwd. New immutable source/bundle releases and protected backup remain.
+A partial activation failure is not success; use this rollback with the same
+arguments and inspect its actual output. Browser-free negative pointer/delta and
+no-write dry-run contracts are exercised by `qa/operator-contract-test.py`;
+service activation/rollback are **not rehearsed**.

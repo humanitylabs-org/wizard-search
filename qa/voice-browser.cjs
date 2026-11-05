@@ -4,6 +4,8 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
 const root = path.resolve(__dirname, '../web'), evidence = process.env.QA_EVIDENCE || path.resolve(__dirname, '../evidence');
 fs.mkdirSync(evidence, { recursive: true });
 const calls = [], checks = [], real = process.argv.includes('--real');
+// Provider discovery is read-only startup traffic, not a repeated search or inference.
+const taskCalls = rows => rows.filter(x => !/\/api\/(?:config|overview-provider)(?:\?|$)/.test(x));
 const client = `window.WizardApp={ready(){},back:{useHistory(){},register(x){window.backReceiver=x}},voiceInput:{register(x){window.voiceReceiver=x}}};`;
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
@@ -11,6 +13,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname.includes('/api/')) {
     calls.push(u.pathname + u.search);
     if (u.pathname.endsWith('/config')) { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ capabilities: {web:true, images:true, overview:false}, state:'ready' })); }
+    if (u.pathname.endsWith('/overview-provider')) { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({mode:'off',model:null,tinfoil:{installed:false,connected:false}})); }
     const q = u.searchParams.get('q');
     if (real && q === 'Python documentation' && u.pathname.endsWith('/web')) {
       try {
@@ -64,7 +67,7 @@ const server = http.createServer(async (req, res) => {
   const beforeReload = calls.length;
   await page.reload(); await page.waitForFunction(() => !!window.voiceReceiver);
   await page.waitForFunction(() => document.querySelector('#voice-status').textContent === 'Voice query complete.');
-  await send(page,m); assert.equal(calls.filter(x=>!x.includes('/config')).length, calls.slice(0,beforeReload).filter(x=>!x.includes('/config')).length);
+  await send(page,m); assert.deepEqual(taskCalls(calls), taskCalls(calls.slice(0,beforeReload)));
   checks.push('reload restores durable results without duplicate search');
   const interrupted={...m,request_id:'search_interrupt_1',text:'slow fixture'};
   await send(page,interrupted);
@@ -102,9 +105,9 @@ const server = http.createServer(async (req, res) => {
   const blocked = await ctx.newPage();
   await blocked.addInitScript(() => Object.defineProperty(window, 'indexedDB', {value:{open(){throw new Error('fixture storage denied')}}}));
   await blocked.goto(base); await blocked.waitForFunction(() => !!window.voiceReceiver);
-  const beforeBlocked = calls.length;
+  const beforeBlocked = taskCalls(calls);
   await assert.rejects(send(blocked,{...m,request_id:'search_storage_1'}),/storage denied/);
-  assert.equal(calls.length,beforeBlocked);
+  assert.deepEqual(taskCalls(calls),beforeBlocked);
   await blocked.close(); checks.push('storage failure rejects before search');
   if (real) {
     await send(page,{...m,request_id:'search_real_0001',text:'Python documentation'});
@@ -118,7 +121,7 @@ const server = http.createServer(async (req, res) => {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({path:path.join(evidence,`search-voice-${viewport.width}.png`),fullPage:true});
   }
-  assert.equal(calls.filter(x=>/chat|overview|translate|read-image/.test(x)).length,0);
+  assert.equal(taskCalls(calls).filter(x=>/\/api\/(?:chat|overview(?:-stream)?|translate|read-image)(?:\?|$)/.test(x)).length,0);
   assert.deepEqual(errors,[]);
   checks.push('phone/desktop layout, no Chats/inference calls, no page errors');
   const result={passed:checks.length,checks,provider_mode:real?'one real query; remaining fixtures':'fixtures only',shared_client:'fixture implementing frozen API seam',calls,page_errors:errors};
