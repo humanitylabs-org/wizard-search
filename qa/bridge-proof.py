@@ -8,6 +8,8 @@ p=argparse.ArgumentParser();p.add_argument('--bind',required=True);p.add_argumen
 class Fixture(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
+  assert self.headers.get('Authorization')=='Bearer '+upstream_token
+  assert self.headers.get('Authorization')!='Bearer '+token
   j=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   self.wfile.write(b'data: {"fixture":1}\n\n');self.wfile.flush();time.sleep(.4)
@@ -16,9 +18,10 @@ up=ThreadingHTTPServer(('127.0.0.1',0),Fixture);threading.Thread(target=up.serve
 root=pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(dir=root) as temp:
  token=secrets.token_urlsafe(48);f=pathlib.Path(temp)/'token';f.write_text(token);os.chmod(f,0o600)
+ upstream_token=secrets.token_urlsafe(48);uf=pathlib.Path(temp)/'upstream-token';uf.write_text(upstream_token);os.chmod(uf,0o600)
  # Dedicated test port; the user-facing release uses a different fixed port.
  port=19339
- proc=subprocess.Popen([sys.executable,str(root/'ops/private-proxy-bridge.py'),'--bind',a.bind,'--port',str(port),'--token-file',str(f),'--upstream',f'http://127.0.0.1:{up.server_port}/v1/chat/completions'])
+ proc=subprocess.Popen([sys.executable,str(root/'ops/private-proxy-bridge.py'),'--bind',a.bind,'--port',str(port),'--token-file',str(f),'--upstream-token-file',str(uf),'--upstream',f'http://127.0.0.1:{up.server_port}/v1/chat/completions'])
  url=f'http://{a.bind}:{port}/v1/chat/completions'
  def request(token_value=token,model='gpt-oss-120b',**headers):
   return urllib.request.urlopen(urllib.request.Request(url,data=json.dumps({'model':model,'messages':[{'role':'user','content':'synthetic fixture'}],'stream':True,'reasoning_effort':'low'}).encode(),headers={'Authorization':'Bearer '+token_value,'Content-Type':'application/json',**headers}),timeout=5)
@@ -38,6 +41,6 @@ with tempfile.TemporaryDirectory(dir=root) as temp:
   start=time.monotonic()
   with request() as r:first=r.readline();first_ms=round((time.monotonic()-start)*1000);rest=r.read();total_ms=round((time.monotonic()-start)*1000)
   assert b'fixture' in first and b'[DONE]' in rest and first_ms<300 and total_ms>=350
-  result={'fixture_only':True,'auth_rejected':checks,'first_line_ms':first_ms,'total_ms':total_ms,'no_buffering':True}
+  result={'fixture_only':True,'auth_rejected':checks,'separate_upstream_authorization':True,'first_line_ms':first_ms,'total_ms':total_ms,'no_buffering':True}
   a.out.write_text(json.dumps(result,indent=2));print(json.dumps(result))
  finally:proc.terminate();proc.wait(timeout=5);up.shutdown()

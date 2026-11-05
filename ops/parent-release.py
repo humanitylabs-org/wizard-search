@@ -2,7 +2,7 @@
 """PARENT ONLY. Guarded package -> verify -> cutover -> retire; one-command rollback.
 Run --help and read PARENT-RELEASE.md. No action runs without --execute. Never edits apps.json.
 """
-import argparse,hashlib,json,os,pathlib,secrets,shutil,subprocess,sys,urllib.request,time
+import argparse,hashlib,json,os,pathlib,runpy,secrets,shutil,subprocess,sys,urllib.request,time
 P=pathlib.Path
 p=argparse.ArgumentParser()
 p.add_argument('action',choices=['package','cutover','retire-legacy','rollback'])
@@ -10,6 +10,7 @@ p.add_argument('--execute',action='store_true');p.add_argument('--release',type=
 p.add_argument('--wam-root',type=P,required=True);p.add_argument('--routes',type=P,required=True)
 p.add_argument('--runtipi',type=P,default=P.home()/'runtipi')
 p.add_argument('--os-home',type=P,default=P.home()/'.wizard-os')
+p.add_argument('--upstream-token-file',type=P,help='Package only: explicit regular mode-0600 approved upstream credential file; no discovery.')
 a=p.parse_args();root=P(__file__).resolve().parents[1];release=a.release.resolve();backup=release/'parent-backup'
 if not a.execute:print('DRY RUN:',a.action,'Search only; read ops/PARENT-RELEASE.md; add --execute after reviewing evidence.');sys.exit()
 import yaml  # All runtime prerequisites must resolve before the first production write.
@@ -38,6 +39,10 @@ def form(row):
  cfg.update(skipEnv=False,skipPull=True,skipRun=False,forcePull=False)
  return cfg
 if a.action=='package':
+ # Validate the explicit credential before the first production write. No env/account discovery.
+ if a.upstream_token_file is None:p.error('package requires --upstream-token-file')
+ try:upstream_token=runpy.run_path(str(root/'ops/private-proxy-bridge.py'))['read_upstream_token'](a.upstream_token_file)
+ except ValueError as error:p.error(str(error))
  manifest=json.loads((release/'artifact-manifest.json').read_text());sha=manifest['source_sha']
  assert call(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()==sha and not call(['git','-C',str(root),'status','--porcelain'],text=True).strip(),'Use the exact clean pushed source checkout.'
  assert manifest['tests']=='passed' and manifest['production_activated'] is False
@@ -70,11 +75,13 @@ if a.action=='package':
  identity=loaded_identity(graph,img)
  gateway=next(v['Gateway'] for k,v in live['NetworkSettings']['Networks'].items() if 'search-preview' in k and v.get('Gateway'))
  token=secrets.token_urlsafe(48);tokenfile=backup/'proxy-token';tokenfile.write_text(token);os.chmod(tokenfile,0o600)
+ upstream_tokenfile=backup/'upstream-token'
+ with os.fdopen(os.open(upstream_tokenfile,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as f:f.write(upstream_token)
  shutil.copy2(root/'ops/private-proxy-bridge.py',backup/'private-proxy-bridge.py')
  # Search-only random token, not the Tinfoil API key or a private agent credential.
  run(['docker','exec','-i',container,'python3','-c','import sys,os;from pathlib import Path;p=Path("/data/private-proxy-token");p.write_bytes(sys.stdin.buffer.read());os.chmod(p,0o600)'],input=token.encode())
  service.parent.mkdir(parents=True,exist_ok=True)
- service.write_text('[Unit]\nDescription=Search-only bridge to approved private loopback inference\nAfter=network.target\n[Service]\nExecStart=/usr/bin/python3 '+str(backup/'private-proxy-bridge.py')+' --bind '+gateway+' --token-file '+str(tokenfile)+' --upstream http://127.0.0.1:3301/v1/chat/completions\nRestart=on-failure\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=read-only\n[Install]\nWantedBy=default.target\n')
+ service.write_text('[Unit]\nDescription=Search-only bridge to approved private loopback inference\nAfter=network.target\n[Service]\nExecStart=/usr/bin/python3 '+str(backup/'private-proxy-bridge.py')+' --bind '+gateway+' --token-file '+str(tokenfile)+' --upstream-token-file '+str(upstream_tokenfile)+' --upstream http://127.0.0.1:3301/v1/chat/completions\nRestart=on-failure\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=read-only\n[Install]\nWantedBy=default.target\n')
  run(['systemctl','--user','daemon-reload']);run(['systemctl','--user','enable','--now',service.name])
 
  compose=yaml.safe_load((repo/'docker-compose.yml').read_text());svc=compose['services']['search-preview'];svc.pop('build',None);svc['image']=manifest['image'];svc['pull_policy']='never'

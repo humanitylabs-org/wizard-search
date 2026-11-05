@@ -6,7 +6,7 @@
 
 1. Copy the worker's `artifact-manifest.json` and the named image tar (verify its SHA256) into the durable release directory. Use the **clean pushed candidate checkout** for the operator script, not a worker directory containing synthetic fixtures.
 2. The WAM registry projection omits `receives_voice_input`. The exact-source review and minimal activation/rollback route are now in `WAM-VOICE-REVIEW.md`, with pushed host/runtime-source branches and repeated-regeneration regressions. Both executable host copies (API source and the managed CLI builder bundle) must preserve the bool. The queued repair job tests both source baselines and a one-file-only managed builder distribution in isolated homes. Do not patch `apps.json` or mutate a sealed release. Regenerate through both entrypoints and read `/wizard/v1/apps` back after parent activation; this remains a real platform gate, not a waiver.
-3. The fast approved private proxy at loopback `3301` must still work. No inspection of its owning private agent/container is needed or permitted. The release helper only reaches its previously authorized HTTP inference interface. The installed Tinfoil app alternative was verified but buffers output for roughly ten seconds, so it is not silently substituted.
+3. The fast approved private proxy at loopback `3301` must still work. The bridge now requires **two distinct credentials**: the existing Search-only caller token and an explicitly supplied upstream provider token file, regular mode 0600, at most 8192 bytes. The parent provisions that file from the already-approved main legacy Search provider configuration; neither helper discovers accounts, reads environment files, or inspects private agents/containers. Caller Authorization is never forwarded. Redirects fail closed so the provider credential cannot follow another endpoint. No provider/model substitution is permitted. See `BRIDGE-AUTH-REPAIR.md` for a bridge-only repair of an already packaged release; do not rerun package for that case.
 4. Set these control-plane variables from the recorded live discovery (all paths are operator inputs; no personal keys/machines are packaged):
 
 ```sh
@@ -14,7 +14,8 @@ SOURCE=/path/to/clean/pushed/candidate
 RELEASE=/path/to/durable/consolidated-search-release
 WAM_SOURCE=/path/to/reviewed/voice-projection-capable/wam/source
 ROUTES=/path/to/the/serving/private-routes.json
-/usr/bin/python3 "$SOURCE/ops/parent-release.py" package --release "$RELEASE" --wam-root "$WAM_SOURCE" --routes "$ROUTES"
+UPSTREAM_TOKEN_FILE=/path/to/protected/approved-upstream-token
+/usr/bin/python3 "$SOURCE/ops/parent-release.py" package --release "$RELEASE" --wam-root "$WAM_SOURCE" --routes "$ROUTES" --upstream-token-file "$UPSTREAM_TOKEN_FILE"
 # Above is a DRY RUN. Only the parent adds --execute.
 ```
 
@@ -23,10 +24,12 @@ The real lifecycle interfaces were checked against installed App Manager revisio
 ## Package (parent only)
 
 ```sh
-/usr/bin/python3 "$SOURCE/ops/parent-release.py" package --execute --release "$RELEASE" --wam-root "$WAM_SOURCE" --routes "$ROUTES"
+/usr/bin/python3 "$SOURCE/ops/parent-release.py" package --execute --release "$RELEASE" --wam-root "$WAM_SOURCE" --routes "$ROUTES" --upstream-token-file "$UPSTREAM_TOKEN_FILE"
 ```
 
 This snapshots both installed/store recipes and pins, Search-only lifecycle row/config, Search's `/data`, owner route/launcher source metadata and any previous bridge unit into `parent-backup` mode 0700. Sensitive state stays in that local protected folder, never source/images. It loads the exact built image (no VPS build), retains existing service/volume identities, starts a narrowly authenticated bridge bound only to Search's existing Docker gateway, then uses WAM lifecycle update and regenerates the registry. The legacy root and service are still intact. No source of credentials is read from a private agent.
+
+Package validates the explicit upstream file before its first production write, then saves a mode-0600 copy as `parent-backup/upstream-token`; only this file path is placed in the bridge unit. The app container receives only the Search caller token, never the upstream credential. Existing source/image binding gates remain unchanged.
 
 Verify the candidate at the old preview URL through the actual gateway on phone/desktop/two skins, real web/images, real private cited stream, shared media Back/root/outside tap, voice routing/retries, translation and read-image failures. Check actual image revision, model `gpt-oss-120b`, low reasoning request evidence and first-token timing. Read back `/wizard/v1/apps`; manifest declaration alone is insufficient. Only after those checks create `parent-acceptance.json` containing exactly `{"verified":true,"sha":"<manifest source_sha>"}` in RELEASE.
 
