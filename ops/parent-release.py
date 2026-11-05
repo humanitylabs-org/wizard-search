@@ -13,6 +13,7 @@ p.add_argument('--os-home',type=P,default=P.home()/'.wizard-os')
 a=p.parse_args();root=P(__file__).resolve().parents[1];release=a.release.resolve();backup=release/'parent-backup'
 if not a.execute:print('DRY RUN:',a.action,'Search only; read ops/PARENT-RELEASE.md; add --execute after reviewing evidence.');sys.exit()
 import yaml  # All runtime prerequisites must resolve before the first production write.
+from image_archive_identity import archive_identity, loaded_identity
 # Both the active host CLI and App Manager must propagate the manifest voice field before release.
 sys.path.insert(0,str(a.wam_root));from wam.runtipi import Runtipi
 rt=Runtipi.from_install(a.runtipi)
@@ -47,7 +48,7 @@ if a.action=='package':
   expected={'app/Dockerfile','.dockerignore','server.py','setup.json','openapi.json','SETUP.md','runtipi/docker-compose.yml'}|{str(f.relative_to(root)) for f in (root/'web').rglob('*') if f.is_file()}
   assert set(hashes)==expected and all(hashlib.sha256((root/name).read_bytes()).hexdigest()==value for name,value in hashes.items()),'Reused image runtime inputs differ from candidate'
  assert not backup.exists(),'Backup already exists; inspect it or use rollback. Never overwrite rollback material.'
- archive=release/manifest['image_archive'];assert hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()==manifest['image_archive_sha256']
+ archive=release/manifest['image_archive'];graph=archive_identity(archive,manifest)
  live=json.loads(call(['docker','inspect',container]))[0]
  assert live['Config']['Labels']['org.opencontainers.image.revision']=='e429987349b87d0c6d4973fb482c604765e2434b','Serving package moved; rebase/reverify.'
  row=rt.app(urn)['app'];assert row['status']=='running'
@@ -64,7 +65,7 @@ if a.action=='package':
  os.chmod(backup/'search-data.tar',0o600)
  run(['docker','load','-i',str(archive)],stdout=subprocess.DEVNULL)
  img=json.loads(call(['docker','image','inspect',manifest['image']]))[0]
- assert img['Id']==manifest['image_id'] and img['Config']['Labels']['org.opencontainers.image.revision']==image_sha
+ identity=loaded_identity(graph,img)
  gateway=next(v['Gateway'] for k,v in live['NetworkSettings']['Networks'].items() if 'search-preview' in k and v.get('Gateway'))
  token=secrets.token_urlsafe(48);tokenfile=backup/'proxy-token';tokenfile.write_text(token);os.chmod(tokenfile,0o600)
  shutil.copy2(root/'ops/private-proxy-bridge.py',backup/'private-proxy-bridge.py')
@@ -85,7 +86,7 @@ if a.action=='package':
  lifecycle('PATCH','update',{'performBackup':True});refresh()
  assert obj('http://127.0.0.1:19289/api/overview-provider')['model']=='gpt-oss-120b'
  provider=obj('http://127.0.0.1:19289/api/config');assert provider['capabilities']['overview'] and provider['capabilities']['web'] and provider['capabilities']['images']
- write(release/'parent-package-verification.json',{'sha':sha,'candidate_port':19289,'private_proxy_bridge':True,'model':'gpt-oss-120b','cutover':False})
+ write(release/'parent-package-verification.json',{'sha':sha,'candidate_port':19289,'private_proxy_bridge':True,'model':'gpt-oss-120b','cutover':False,'image_identity':identity})
  print('Package updated, legacy root untouched. Verify real private stream plus phone/desktop/two-skin screenshots, then write parent-acceptance.json {"verified":true,"sha":"'+sha+'"}.')
 elif a.action=='cutover':
  manifest=json.loads((release/'artifact-manifest.json').read_text());accept=json.loads((release/'parent-acceptance.json').read_text());assert accept=={'verified':True,'sha':manifest['source_sha']}
@@ -103,7 +104,11 @@ elif a.action=='cutover':
 elif a.action=='retire-legacy':
  manifest=json.loads((release/'artifact-manifest.json').read_text())
  assert json.loads((release/'parent-cutover.json').read_text())=={'verified':True,'sha':manifest['source_sha']}
- assert json.loads(call(['docker','inspect',container]))[0]['Image']==manifest['image_id']
+ package=json.loads((release/'parent-package-verification.json').read_text());assert package['sha']==manifest['source_sha']
+ graph=archive_identity(release/manifest['image_archive'],manifest)
+ running_id=json.loads(call(['docker','inspect',container]))[0]['Image']
+ identity=loaded_identity(graph,json.loads(call(['docker','image','inspect',running_id]))[0])
+ assert identity==package['image_identity'] and running_id==identity['effective_image_id']
  run(['systemctl','--user','stop','wizard-search.service']);assert subprocess.run(['systemctl','--user','is-active','wizard-search.service'],capture_output=True,text=True).stdout.strip()!='active'
 else:
  assert backup.exists()
