@@ -12,6 +12,7 @@ parser.add_argument('--reuse-from',type=Path,required=True)
 a=parser.parse_args()
 root=Path(__file__).resolve().parents[1]
 evidence=root/'evidence';evidence.mkdir(exist_ok=True)
+subprocess.run(['node','--test','qa/media-readiness-test.cjs'],cwd=root,check=True,timeout=20)
 receipt={}
 subprocess.run([sys.executable,'qa/shell-host-contract-test.py','--shell',str(root/'shell-web'),
                 '--out',str(evidence/'shell-host-contract.json')],cwd=root,check=True,timeout=20,

@@ -52,7 +52,7 @@ def handler(shell, app_url):
                     with urllib.request.urlopen(app_url + self.path[len('/wizard-search'):], timeout=90) as r:
                         return self.send(r.status, r.read(), r.headers.get('Content-Type', 'application/json'))
                 except urllib.error.HTTPError as e:
-                    return self.send(e.code, e.read())
+                    return self.send(e.code, e.read(), e.headers.get('Content-Type', 'application/octet-stream'))
             if path.startswith('/wizard-os-home/'):
                 rel = urllib.parse.unquote(path[len('/wizard-os-home/'):]) or 'index.html'
                 f = (shell / rel).resolve()
