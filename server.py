@@ -650,10 +650,12 @@ def translate_items(items: list[str], to: str = "English") -> dict:
 
 def _unit_box(b) -> list[float] | None:
     """[left, top, right, bottom] in thousandths → fractions of the image, or None when it is not a real box."""
-    if not isinstance(b, list) or len(b) != 4 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in b):
+    # Range-check the raw JSON numbers first: NaN/Infinity fail it, and a huge int never reaches float().
+    if not isinstance(b, list) or len(b) != 4 or any(
+            isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1000 for v in b):
         return None
     l, t, r, bt = (float(v) for v in b)
-    if not all(0 <= v <= 1000 for v in (l, t, r, bt)) or r - l < 1 or bt - t < 1:
+    if r - l < 1 or bt - t < 1:
         return None
     return [round(v / 1000, 4) for v in (l, t, r, bt)]
 
@@ -672,7 +674,9 @@ def read_image(data: bytes, mime: str, geometry: bool = False) -> dict:
     for x in (j.get("lines") or []):
         box = None
         if isinstance(x, dict):
-            box, x = _unit_box(x.get("box")), x.get("text", "")
+            box, x = _unit_box(x.get("box")) if geometry else None, x.get("text")
+            if x is None:  # missing or null text is no line, whatever its box
+                continue
         t = re.sub(r"\s+", " ", str(x)).strip()
         if t:
             lines.append(t)

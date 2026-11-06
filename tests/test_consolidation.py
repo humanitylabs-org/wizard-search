@@ -86,6 +86,51 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(out["boxes"], [[0.1, 0.2, 0.6, 0.25], None, None, None, None, None, None])
         self.assertEqual(len(out["boxes"]), len(out["lines"]))
 
+    def test_read_image_malformed_numbers_and_null_text(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        huge = "1" + "0" * 400                                          # float() of this overflows
+        reply = ('{"lines": ['
+                 '{"text": "SYNTHETIC HUGE", "box": [0, 0, ' + huge + ', 50]},'
+                 '{"text": "SYNTHETIC NAN", "box": [0, 0, NaN, 50]},'
+                 '{"text": "SYNTHETIC INF", "box": [0, 0, Infinity, 50]},'
+                 '{"text": "SYNTHETIC NEGINF", "box": [-Infinity, 0, 50, 50]},'
+                 '{"text": null, "box": [1, 1, 50, 50]},'
+                 '{"box": [1, 1, 50, 50]},'
+                 '{"text": "SYNTHETIC OK", "box": [500, 500, 1000, 1000]}]}')
+        with patch.object(m, "_llm", return_value=reply):
+            out = m.read_image(b"synthetic-image", "image/png", geometry=True)
+        self.assertEqual(out["lines"], ["SYNTHETIC HUGE", "SYNTHETIC NAN", "SYNTHETIC INF", "SYNTHETIC NEGINF",
+                                        "SYNTHETIC OK"])
+        self.assertEqual(out["boxes"], [None, None, None, None, [0.5, 0.5, 1.0, 1.0]])
+        # Lines-only never looks at boxes, and null text is still no line there.
+        with patch.object(m, "_llm", return_value=reply), \
+                patch.object(m, "_unit_box", side_effect=AssertionError("boxes parsed")):
+            out = m.read_image(b"synthetic-image", "image/png")
+        self.assertEqual(out["lines"], ["SYNTHETIC HUGE", "SYNTHETIC NAN", "SYNTHETIC INF", "SYNTHETIC NEGINF",
+                                        "SYNTHETIC OK"])
+        self.assertNotIn("boxes", out)
+
+    def test_read_image_geometry_failure_has_no_fallback(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        with patch.object(m, "_llm", side_effect=RuntimeError("vision unavailable")) as call:
+            with self.assertRaises(RuntimeError):
+                m.read_image(b"synthetic-image", "image/png", geometry=True)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(call.call_args.args[0], "gemma4-31b")
+        self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_BOXES_SYSTEM)
+        self.assertEqual(call.call_args.args[2], 6000)
+        with patch.object(m, "llm", return_value={"url": "x"}), \
+                patch.object(m, "_llm", side_effect=RuntimeError("vision unavailable")) as call:
+            h = m.H.__new__(m.H)
+            h.path, h.command = "/api/read-image?geometry=1", "POST"
+            h.headers = {"Content-Length": "4", "Content-Type": "image/jpeg"}
+            h.rfile = __import__("io").BytesIO(b"\xff\xd8\xff\xd9")
+            sent = []
+            h._json = lambda code, obj: sent.append((code, obj))
+            h.do_POST()
+        self.assertEqual(sent, [(502, {"error": "RuntimeError"})])
+        self.assertEqual(call.call_count, 1)
+
     def test_read_image_geometry_route_flag(self):
         m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
         seen = []
