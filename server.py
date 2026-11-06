@@ -8,7 +8,8 @@ Routes (all under /wizard-search):
   GET  /api/overview?q=       short cited answer over the web results (Tinfoil private inference)
   GET  /img/<id>.jpg          full-size image proxy, only for ids issued by a recent image search
   POST /api/translate         {"items": [...], "to": "English"} → same-order translations (Tinfoil gemma4-31b, gpt-oss fallback)
-  POST /api/read-image        screenshot bytes → {"lines": [...]} (Tinfoil gemma4-31b vision), for screens with no text layer
+  POST /api/read-image        screenshot bytes → {"lines": [...]} (Tinfoil gemma4-31b vision), for screens with no text layer;
+                              ?geometry=1 adds "boxes": per line [l, t, r, b] image fractions or null (same model)
   GET  /api/health
 
 Loopback only; the private gateway adds Tailnet identity. Queries are never logged.
@@ -581,6 +582,13 @@ READ_IMAGE_SYSTEM = (
     "Read all the text visible in this phone screenshot, top to bottom, left to right, exactly as written "
     "(keep the original language and spelling). One entry per line of text; skip the clock, battery and other "
     "status-bar icons. Reply with JSON only, no code fence: {\"lines\": [\"...\"]}")
+# ?geometry=1 (the orb's Translate screen paints each line over its own letters): the same read, with where it is.
+READ_IMAGE_BOXES_SYSTEM = (
+    "Read all the text visible in this phone screenshot, top to bottom, left to right, exactly as written "
+    "(keep the original language and spelling). One entry per line of text; skip the clock, battery and other "
+    "status-bar icons. For each line give the box tightly around its letters as [left, top, right, bottom] in "
+    "thousandths of the image width and height (0 is the left or top edge, 1000 the right or bottom edge). "
+    "Reply with JSON only, no code fence: {\"lines\": [{\"text\": \"...\", \"box\": [left, top, right, bottom]}]}")
 TRANSLATE_CACHE = TTLCache(2000, 6 * 3600)
 
 
@@ -640,16 +648,39 @@ def translate_items(items: list[str], to: str = "English") -> dict:
     return {"to": to, "from": ", ".join(sorted(langs)), "items": [o or "" for o in out], "ms": int((time.time() - t0) * 1000)}
 
 
-def read_image(data: bytes, mime: str) -> dict:
-    """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model."""
+def _unit_box(b) -> list[float] | None:
+    """[left, top, right, bottom] in thousandths → fractions of the image, or None when it is not a real box."""
+    if not isinstance(b, list) or len(b) != 4 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in b):
+        return None
+    l, t, r, bt = (float(v) for v in b)
+    if not all(0 <= v <= 1000 for v in (l, t, r, bt)) or r - l < 1 or bt - t < 1:
+        return None
+    return [round(v / 1000, 4) for v in (l, t, r, bt)]
+
+
+def read_image(data: bytes, mime: str, geometry: bool = False) -> dict:
+    """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model.
+    With geometry, also "boxes": one per line, in the same order, [l, t, r, b] as fractions of the image or null
+    when the model gave no usable box. Nothing is guessed: a null box stays null."""
     t0 = time.time()
     url = f"data:{mime};base64," + base64.b64encode(data).decode()
     vision = (llm() or {}).get("vision", VISION_MODEL)
-    j = _json_reply(_llm(vision, [{"role": "system", "content": READ_IMAGE_SYSTEM},
+    j = _json_reply(_llm(vision, [{"role": "system", "content": READ_IMAGE_BOXES_SYSTEM if geometry else READ_IMAGE_SYSTEM},
                                         {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
-                                                                     {"type": "text", "text": "Read the text."}]}], 4000, 90))
-    lines = [re.sub(r"\s+", " ", str(x)).strip() for x in (j.get("lines") or []) if str(x).strip()][:300]
-    return {"lines": lines, "model": vision, "ms": int((time.time() - t0) * 1000)}
+                                                                     {"type": "text", "text": "Read the text."}]}], 6000 if geometry else 4000, 90))
+    lines, boxes = [], []
+    for x in (j.get("lines") or []):
+        box = None
+        if isinstance(x, dict):
+            box, x = _unit_box(x.get("box")), x.get("text", "")
+        t = re.sub(r"\s+", " ", str(x)).strip()
+        if t:
+            lines.append(t)
+            boxes.append(box)
+    out = {"lines": lines[:300], "model": vision, "ms": int((time.time() - t0) * 1000)}
+    if geometry:
+        out["boxes"] = boxes[:300]
+    return out
 
 
 def cached(cache: TTLCache, q: str, fn):
@@ -838,7 +869,8 @@ class H(BaseHTTPRequestHandler):
                 mime = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                 if mime not in ("image/png", "image/jpeg", "image/webp"):
                     return self._json(415, {"error": "image required"})
-                return self._json(200, read_image(body, mime))
+                geometry = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("geometry") == ["1"]
+                return self._json(200, read_image(body, mime, geometry))
             return self._json(404, {"error": "not found"})
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": type(e).__name__})
