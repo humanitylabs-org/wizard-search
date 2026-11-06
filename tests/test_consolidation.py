@@ -57,6 +57,52 @@ class ConsolidationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 m.read_image(b"synthetic-image", "image/png")
 
+    def test_read_image_default_reply_and_prompt_unchanged(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        with patch.object(m, "_llm", return_value='{"lines":["SEARCH QA"]}') as call:
+            out = m.read_image(b"synthetic-image", "image/png")
+        self.assertNotIn("boxes", out)
+        self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_SYSTEM)
+        self.assertEqual(call.call_args.args[2], 4000)
+
+    def test_read_image_geometry_same_model_validated_boxes(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        reply = json.dumps({"lines": [
+            {"text": "SYNTHETIC ONE", "box": [100, 200, 600, 250]},
+            {"text": "  SYNTHETIC   TWO ", "box": [10, 20, 30]},        # wrong arity
+            {"text": "SYNTHETIC THREE", "box": [900, 10, 100, 40]},     # right before left
+            {"text": "SYNTHETIC FOUR", "box": [0, 0, 1001, 50]},        # outside the image
+            {"text": "SYNTHETIC FIVE", "box": [True, 0, 50, 50]},       # not numbers
+            {"text": "SYNTHETIC SIX"},                                  # no box at all
+            {"text": "", "box": [1, 1, 50, 50]},                        # empty text is not a line
+            "SYNTHETIC SEVEN",                                          # plain line, no geometry
+        ]})
+        with patch.object(m, "_llm", return_value=reply) as call:
+            out = m.read_image(b"synthetic-image", "image/png", geometry=True)
+        self.assertEqual(call.call_args.args[0], "gemma4-31b")
+        self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_BOXES_SYSTEM)
+        self.assertEqual(out["lines"], ["SYNTHETIC ONE", "SYNTHETIC TWO", "SYNTHETIC THREE", "SYNTHETIC FOUR",
+                                        "SYNTHETIC FIVE", "SYNTHETIC SIX", "SYNTHETIC SEVEN"])
+        self.assertEqual(out["boxes"], [[0.1, 0.2, 0.6, 0.25], None, None, None, None, None, None])
+        self.assertEqual(len(out["boxes"]), len(out["lines"]))
+
+    def test_read_image_geometry_route_flag(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        seen = []
+        with patch.object(m, "llm", return_value={"url": "x"}), \
+                patch.object(m, "read_image", side_effect=lambda b, mime, g: seen.append(g) or {"lines": []}):
+            for path, want in (("/api/read-image", False), ("/api/read-image?geometry=1", True),
+                               ("/api/read-image?geometry=yes", False)):  # load() clears the base path
+                h = m.H.__new__(m.H)
+                h.path, h.command = path, "POST"
+                h.headers = {"Content-Length": "4", "Content-Type": "image/jpeg"}
+                h.rfile = __import__("io").BytesIO(b"\xff\xd8\xff\xd9")
+                sent = []
+                h._json = lambda code, obj: sent.append((code, obj))
+                h.do_POST()
+                self.assertEqual(sent[-1][0], 200)
+                self.assertEqual(seen[-1], want)
+
     def test_voice_identity_and_shared_paths_retained(self):
         voice = (ROOT / "web/voice-input.js").read_text()
         self.assertIn("indexedDB.open('wizard-search-voice:' + scope, 1)", voice)
