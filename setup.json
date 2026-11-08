@@ -73,7 +73,7 @@
     },
     "WIZARD_TRANSLATE_MODEL": {
       "description": "Translation model",
-      "default": "gemma4-31b",
+      "default": "deepseek-v4-1-flash",
       "secret": false
     },
     "WIZARD_TRANSLATE_FALLBACK": {
@@ -83,7 +83,7 @@
     },
     "WIZARD_VISION_MODEL": {
       "description": "Vision model",
-      "default": "gemma4-31b",
+      "default": "deepseek-v4-1-flash",
       "secret": false
     },
     "WIZARD_SEARCH_TINFOIL_APP": {

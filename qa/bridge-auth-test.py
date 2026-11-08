@@ -228,6 +228,12 @@ class Protocol(unittest.TestCase):
         self.assertEqual(self.request(body=json.dumps(value).encode())[0], 200)
         self.assertEqual(self.seen[0][0]['Authorization'], 'Bearer ' + UPSTREAM)
 
+    def test_deepseek_translation_model_retains_auth(self):
+        value = json.loads(BODY)
+        value['model'] = 'deepseek-v4-1-flash'
+        self.assertEqual(self.request(body=json.dumps(value).encode())[0], 200)
+        self.assertEqual(self.seen[0][0]['Authorization'], 'Bearer ' + UPSTREAM)
+
     def test_wrong_missing_or_upstream_caller_credential_never_forwarded(self):
         for token in ('wrong', None, UPSTREAM):
             with self.subTest(token_kind='missing' if token is None else 'incorrect'):

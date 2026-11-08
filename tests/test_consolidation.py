@@ -43,16 +43,36 @@ class ConsolidationTests(unittest.TestCase):
         m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
         with patch.object(m, "_llm", side_effect=[RuntimeError("primary failed"), '{"from":"French","items":["Hello"]}']) as call:
             self.assertEqual(m.translate_items(["Bonjour"])["items"], ["Hello"])
-            self.assertEqual([c.args[0] for c in call.call_args_list], ["gemma4-31b", "gpt-oss-120b"])
+            self.assertEqual([c.args[0] for c in call.call_args_list], ["deepseek-v4-1-flash", "gpt-oss-120b"])
         with patch.object(m, "_llm", side_effect=RuntimeError("unreachable")):
             with self.assertRaisesRegex(RuntimeError, "translate failed"):
                 m.translate_items(["Au revoir"])
+
+    def test_deepseek_thinking_off_only_for_deepseek(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        sent = []
+
+        class Reply:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+        def fake(req, timeout=0):
+            sent.append(json.loads(req.data))
+            return Reply()
+        with patch.object(m.urllib.request, "urlopen", fake):
+            for model in ("deepseek-v4-1-flash", "gemma4-31b", "gpt-oss-120b"):
+                self.assertEqual(m._llm(model, [{"role": "user", "content": "x"}], 10, 5), "ok")
+        self.assertEqual(sent[0]["chat_template_kwargs"], {"thinking": False})
+        self.assertNotIn("chat_template_kwargs", sent[1])
+        self.assertNotIn("chat_template_kwargs", sent[2])
+        self.assertEqual(sent[2]["reasoning_effort"], "low")
 
     def test_read_image_success_and_failure(self):
         m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
         with patch.object(m, "_llm", return_value='{"lines":["SEARCH QA"]}') as call:
             self.assertEqual(m.read_image(b"synthetic-image", "image/png")["lines"], ["SEARCH QA"])
-            self.assertEqual(call.call_args.args[0], "gemma4-31b")
+            self.assertEqual(call.call_args.args[0], "deepseek-v4-1-flash")
         with patch.object(m, "_llm", side_effect=RuntimeError("vision unavailable")):
             with self.assertRaises(RuntimeError):
                 m.read_image(b"synthetic-image", "image/png")
@@ -79,7 +99,7 @@ class ConsolidationTests(unittest.TestCase):
         ]})
         with patch.object(m, "_llm", return_value=reply) as call:
             out = m.read_image(b"synthetic-image", "image/png", geometry=True)
-        self.assertEqual(call.call_args.args[0], "gemma4-31b")
+        self.assertEqual(call.call_args.args[0], "deepseek-v4-1-flash")
         self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_BOXES_SYSTEM)
         self.assertEqual(out["lines"], ["SYNTHETIC ONE", "SYNTHETIC TWO", "SYNTHETIC THREE", "SYNTHETIC FOUR",
                                         "SYNTHETIC FIVE", "SYNTHETIC SIX", "SYNTHETIC SEVEN"])
@@ -116,7 +136,7 @@ class ConsolidationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 m.read_image(b"synthetic-image", "image/png", geometry=True)
         self.assertEqual(call.call_count, 1)
-        self.assertEqual(call.call_args.args[0], "gemma4-31b")
+        self.assertEqual(call.call_args.args[0], "deepseek-v4-1-flash")
         self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_BOXES_SYSTEM)
         self.assertEqual(call.call_args.args[2], 6000)
         with patch.object(m, "llm", return_value={"url": "x"}), \
