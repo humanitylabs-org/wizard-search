@@ -88,7 +88,7 @@ def llm() -> dict | None:
             except OSError:
                 return None
         return {"via": "proxy", "url": LLM_URL, "key": key, "model": LLM_MODEL, "translate": TRANSLATE_MODEL,
-                "fallback": TRANSLATE_FALLBACK, "vision": VISION_MODEL}
+                "fallback": TRANSLATE_FALLBACK, "vision": VISION_MODEL, "vision_fallback": VISION_FALLBACK}
     link = _link()
     if not link:
         return None
@@ -96,7 +96,7 @@ def llm() -> dict | None:
     main = _pick(models, LLM_MODEL, *(link.get("recommended") or []))
     return {"via": "tinfoil-app", "url": TINFOIL_APP + "/v1/chat/completions", "key": link["token"], "model": main,
             "translate": _pick(models, TRANSLATE_MODEL, main), "fallback": _pick(models, TRANSLATE_FALLBACK, main),
-            "vision": _pick(models, VISION_MODEL, main)}
+            "vision": _pick(models, VISION_MODEL, main), "vision_fallback": _pick(models, VISION_FALLBACK, main)}
 
 
 TINFOIL_PROBE = {"at": 0.0, "data": None}
@@ -573,6 +573,8 @@ def overview_stream(q: str, emit) -> None:
 TRANSLATE_MODEL = os.environ.get("WIZARD_TRANSLATE_MODEL", "deepseek-v4-1-flash")
 TRANSLATE_FALLBACK = os.environ.get("WIZARD_TRANSLATE_FALLBACK", "gpt-oss-120b")
 VISION_MODEL = os.environ.get("WIZARD_VISION_MODEL", "deepseek-v4-1-flash")
+# Reading falls back once to this when the main vision model errors or finds no text (code default; not a recipe setting).
+VISION_FALLBACK = os.environ.get("WIZARD_VISION_FALLBACK", "gemma4-31b")
 TRANSLATE_SYSTEM = (
     "Translate each numbered item into natural %s as it would read in an app, on a menu or on a sign. "
     "Keep numbers, prices, names, links and emoji. If an item is already %s, return it unchanged. "
@@ -663,16 +665,10 @@ def _unit_box(b) -> list[float] | None:
     return [round(v / 1000, 4) for v in (l, t, r, bt)]
 
 
-def read_image(data: bytes, mime: str, geometry: bool = False) -> dict:
-    """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model.
-    With geometry, also "boxes": one per line, in the same order, [l, t, r, b] as fractions of the image or null
-    when the model gave no usable box. Nothing is guessed: a null box stays null."""
-    t0 = time.time()
-    url = f"data:{mime};base64," + base64.b64encode(data).decode()
-    vision = (llm() or {}).get("vision", VISION_MODEL)
-    j = _json_reply(_llm(vision, [{"role": "system", "content": READ_IMAGE_BOXES_SYSTEM if geometry else READ_IMAGE_SYSTEM},
-                                        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
-                                                                     {"type": "text", "text": "Read the text."}]}], 6000 if geometry else 4000, 90))
+def _read_with(model: str, system: str, url: str, geometry: bool, timeout: int) -> tuple[list, list]:
+    j = _json_reply(_llm(model, [{"role": "system", "content": system},
+                                 {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
+                                                              {"type": "text", "text": "Read the text."}]}], 6000 if geometry else 4000, timeout))
     lines, boxes = [], []
     for x in (j.get("lines") or []):
         box = None
@@ -684,6 +680,36 @@ def read_image(data: bytes, mime: str, geometry: bool = False) -> dict:
         if t:
             lines.append(t)
             boxes.append(box)
+    return lines, boxes
+
+
+def read_image(data: bytes, mime: str, geometry: bool = False) -> dict:
+    """Text in a screenshot (pictures, video frames, canvases) when the app exposes none. Tinfoil vision model.
+    With geometry, also "boxes": one per line, in the same order, [l, t, r, b] as fractions of the image or null
+    when the model gave no usable box. Nothing is guessed: a null box stays null.
+    If the main vision model errors or returns no line, the same read is retried once on the fallback model
+    (both are approved private Tinfoil models); "model" names the one that answered."""
+    t0 = time.time()
+    url = f"data:{mime};base64," + base64.b64encode(data).decode()
+    cfg = llm() or {}
+    models = list(dict.fromkeys((cfg.get("vision", VISION_MODEL), cfg.get("vision_fallback", VISION_FALLBACK))))
+    system = READ_IMAGE_BOXES_SYSTEM if geometry else READ_IMAGE_SYSTEM
+    lines: list = []
+    boxes: list = []
+    vision = models[0]
+    answered = False  # a model replied but found no text: that is an answer, not an error, if the fallback then fails
+    for n, model in enumerate(models):
+        last = n == len(models) - 1
+        try:
+            got_lines, got_boxes = _read_with(model, system, url, geometry, 90 if last else 40)
+        except Exception:  # noqa: BLE001
+            if last and not answered:
+                raise
+            continue
+        answered = True
+        lines, boxes, vision = got_lines, got_boxes, model
+        if lines:
+            break
     out = {"lines": lines[:300], "model": vision, "ms": int((time.time() - t0) * 1000)}
     if geometry:
         out["boxes"] = boxes[:300]

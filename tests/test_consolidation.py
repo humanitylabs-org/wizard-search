@@ -130,13 +130,12 @@ class ConsolidationTests(unittest.TestCase):
                                         "SYNTHETIC OK"])
         self.assertNotIn("boxes", out)
 
-    def test_read_image_geometry_failure_has_no_fallback(self):
+    def test_read_image_geometry_failure_falls_back_once_then_raises(self):
         m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
         with patch.object(m, "_llm", side_effect=RuntimeError("vision unavailable")) as call:
             with self.assertRaises(RuntimeError):
                 m.read_image(b"synthetic-image", "image/png", geometry=True)
-        self.assertEqual(call.call_count, 1)
-        self.assertEqual(call.call_args.args[0], "deepseek-v4-1-flash")
+        self.assertEqual([c.args[0] for c in call.call_args_list], ["deepseek-v4-1-flash", "gemma4-31b"])
         self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_BOXES_SYSTEM)
         self.assertEqual(call.call_args.args[2], 6000)
         with patch.object(m, "llm", return_value={"url": "x"}), \
@@ -149,6 +148,33 @@ class ConsolidationTests(unittest.TestCase):
             h._json = lambda code, obj: sent.append((code, obj))
             h.do_POST()
         self.assertEqual(sent, [(502, {"error": "RuntimeError"})])
+        self.assertEqual(call.call_count, 2)
+
+    def test_read_image_falls_back_to_gemma_on_error_or_no_lines(self):
+        m = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions")
+        good = json.dumps({"lines": [{"text": "SYNTHETIC ONE", "box": [100, 200, 600, 250]}]})
+        for first in (RuntimeError("deepseek down"), '{"lines": []}', '{"lines": [{"text": null}, "  "]}', "not json"):
+            with patch.object(m, "_llm", side_effect=[first, good]) as call:
+                out = m.read_image(b"synthetic-image", "image/png", geometry=True)
+            self.assertEqual([c.args[0] for c in call.call_args_list], ["deepseek-v4-1-flash", "gemma4-31b"])
+            self.assertEqual((out["lines"], out["boxes"], out["model"]), (["SYNTHETIC ONE"], [[0.1, 0.2, 0.6, 0.25]], "gemma4-31b"))
+        # Lines-only reads fall back the same way and keep their own prompt.
+        with patch.object(m, "_llm", side_effect=['{"lines": []}', '{"lines":["SEARCH QA"]}']) as call:
+            out = m.read_image(b"synthetic-image", "image/png")
+        self.assertEqual((out["lines"], out["model"]), (["SEARCH QA"], "gemma4-31b"))
+        self.assertEqual(call.call_args.args[1][0]["content"], m.READ_IMAGE_SYSTEM)
+        # A good first read never calls the fallback; a first read with no text and a failing fallback is an empty answer.
+        with patch.object(m, "_llm", return_value=good) as call:
+            self.assertEqual(m.read_image(b"synthetic-image", "image/png", geometry=True)["model"], "deepseek-v4-1-flash")
+        self.assertEqual(call.call_count, 1)
+        with patch.object(m, "_llm", side_effect=['{"lines": []}', RuntimeError("gemma down")]):
+            out = m.read_image(b"synthetic-image", "image/png", geometry=True)
+        self.assertEqual((out["lines"], out["boxes"], out["model"]), ([], [], "deepseek-v4-1-flash"))
+        # Same model configured for both: one attempt only.
+        m2 = load(TINFOIL_PROXY_URL="http://localhost:1/v1/chat/completions", WIZARD_VISION_MODEL="gemma4-31b")
+        with patch.object(m2, "_llm", side_effect=RuntimeError("down")) as call:
+            with self.assertRaises(RuntimeError):
+                m2.read_image(b"synthetic-image", "image/png")
         self.assertEqual(call.call_count, 1)
 
     def test_read_image_geometry_route_flag(self):
