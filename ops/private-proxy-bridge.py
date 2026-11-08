@@ -91,7 +91,7 @@ def main():
                 body = self.rfile.read(n)
                 value = json.loads(body)
                 # The app's established private overview/translation/vision models only.
-                if not isinstance(value, dict) or value.get('model') not in ('gpt-oss-120b', 'gemma4-31b') or not isinstance(value.get('messages'), list):
+                if not isinstance(value, dict) or value.get('model') not in ('gpt-oss-120b', 'gemma4-31b', 'deepseek-v4-1-flash') or not isinstance(value.get('messages'), list):
                     return self.fail(400)
                 request = urllib.request.Request(a.upstream, data=body, headers={
                     'Content-Type': 'application/json',

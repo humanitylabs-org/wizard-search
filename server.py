@@ -7,8 +7,8 @@ Routes (all under /wizard-search):
   GET  /api/web?q=            web results (Bright Data SERP, parsed; local Firecrawl router fallback)
   GET  /api/overview?q=       short cited answer over the web results (Tinfoil private inference)
   GET  /img/<id>.jpg          full-size image proxy, only for ids issued by a recent image search
-  POST /api/translate         {"items": [...], "to": "English"} → same-order translations (Tinfoil gemma4-31b, gpt-oss fallback)
-  POST /api/read-image        screenshot bytes → {"lines": [...]} (Tinfoil gemma4-31b vision), for screens with no text layer;
+  POST /api/translate         {"items": [...], "to": "English"} → same-order translations (Tinfoil deepseek-v4-1-flash, gpt-oss fallback)
+  POST /api/read-image        screenshot bytes → {"lines": [...]} (Tinfoil deepseek-v4-1-flash vision), for screens with no text layer;
                               ?geometry=1 adds "boxes": per line [l, t, r, b] image fractions or null (same model)
   GET  /api/health
 
@@ -570,9 +570,9 @@ def overview_stream(q: str, emit) -> None:
     emit("done", {"model": model, "ms": int((time.time() - t0) * 1000), "answer": answer})
 
 
-TRANSLATE_MODEL = os.environ.get("WIZARD_TRANSLATE_MODEL", "gemma4-31b")
+TRANSLATE_MODEL = os.environ.get("WIZARD_TRANSLATE_MODEL", "deepseek-v4-1-flash")
 TRANSLATE_FALLBACK = os.environ.get("WIZARD_TRANSLATE_FALLBACK", "gpt-oss-120b")
-VISION_MODEL = os.environ.get("WIZARD_VISION_MODEL", "gemma4-31b")
+VISION_MODEL = os.environ.get("WIZARD_VISION_MODEL", "deepseek-v4-1-flash")
 TRANSLATE_SYSTEM = (
     "Translate each numbered item into natural %s as it would read in an app, on a menu or on a sign. "
     "Keep numbers, prices, names, links and emoji. If an item is already %s, return it unchanged. "
@@ -596,6 +596,9 @@ def _llm(model: str, messages: list, max_tokens: int, timeout: int) -> str:
     body = {"model": model, "temperature": 0, "max_tokens": max_tokens, "messages": messages}
     if model.startswith("gpt-oss"):
         body["reasoning_effort"] = "low"
+    elif model.startswith("deepseek"):
+        # DeepSeek thinks by default (~2000 tokens, 6 s median, 27 s outliers); reading and translating need none.
+        body["chat_template_kwargs"] = {"thinking": False}
     cfg = llm() or {}
     req = urllib.request.Request(cfg.get("url", ""), data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg.get("key", "")})

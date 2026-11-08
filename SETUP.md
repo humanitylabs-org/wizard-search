@@ -80,8 +80,8 @@ owner's Tinfoil credit. An operator `TINFOIL_PROXY_URL` (below) takes precedence
 `/v1/chat/completions`; optional `TINFOIL_API_KEY` is sent as Bearer auth. Use the recipient's
 existing Tinfoil proxy, not a guessed public API or another vendor. Overview needs web search
 AND this endpoint; translations/OCR also use it. Models: `WIZARD_SEARCH_MODEL=gpt-oss-120b`,
-`WIZARD_TRANSLATE_MODEL=gemma4-31b`, `WIZARD_TRANSLATE_FALLBACK=gpt-oss-120b`,
-`WIZARD_VISION_MODEL=gemma4-31b`. Operator must verify those models on their proxy.
+`WIZARD_TRANSLATE_MODEL=deepseek-v4-1-flash`, `WIZARD_TRANSLATE_FALLBACK=gpt-oss-120b`,
+`WIZARD_VISION_MODEL=deepseek-v4-1-flash` (set these two back to `gemma4-31b` to revert). Operator must verify those models on their proxy.
 Do not copy an old host's loopback URLs: 127.0.0.1 inside the app container means this app,
 not another container or the physical host. Prefer same-network service DNS; use an explicitly
 configured host gateway only where the host actually exposes that dependency safely.

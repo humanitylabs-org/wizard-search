@@ -106,7 +106,7 @@
       "label": "Translation model",
       "env_variable": "WIZARD_TRANSLATE_MODEL",
       "required": false,
-      "default": "gemma4-31b"
+      "default": "deepseek-v4-1-flash"
     },
     {
       "type": "text",
@@ -120,7 +120,7 @@
       "label": "Vision model",
       "env_variable": "WIZARD_VISION_MODEL",
       "required": false,
-      "default": "gemma4-31b"
+      "default": "deepseek-v4-1-flash"
     }
   ]
 }
