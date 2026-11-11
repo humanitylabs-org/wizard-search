@@ -11,7 +11,7 @@ class DefaultSearchMetadataTests(unittest.TestCase):
         manifest = (ROOT / 'wizard.md').read_text()
         self.assertIn('\nsystem: true\n', manifest)
         self.assertIn('\nuses: [tinfoil-api-key]\n', manifest)
-        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['tipi_version'], 2)
+        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['tipi_version'], 3)
 
     def test_all_package_versions_match(self):
         version = next(line.split(': ', 1)[1] for line in (ROOT / 'wizard.md').read_text().splitlines() if line.startswith('version: '))
