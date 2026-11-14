@@ -461,7 +461,9 @@ def web_search(q: str) -> dict:
                 rows = f.result()
             except Exception:
                 continue
-            if lane in ("searxng", "ddg", "local") and not _relevant(q, rows):
+            # SearXNG ranks the whole question itself; only the stop-word-dropping lanes need the
+            # relevance check (a long question has ~10 content words, so it rejected every SearXNG batch).
+            if lane in ("ddg", "local") and not _relevant(q, rows):
                 continue
             return _finish(q, rows, lane)
         fast_left = not cloud_started or any(v in ("searxng", "ddg", "cloud") for v in futs.values())
