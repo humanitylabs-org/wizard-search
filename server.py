@@ -849,7 +849,8 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/overview-provider":
                 return self._json(200, overview_provider())
             if path == "/api/config":
-                return self._json(200, configuration())
+                # The page's view of the owner's feature switches (on/off only; changing them stays owner-only).
+                return self._json(200, {**configuration(), "switches": {sw["id"]: sw["on"] for sw in switches_doc()["switches"]}})
             if path in ("/api/web", "/api/images", "/api/overview", "/api/overview-stream"):
                 capability = "overview" if "overview" in path else path.rsplit("/", 1)[1]
                 if not configuration()["capabilities"][capability]:
@@ -937,7 +938,12 @@ import threading as _sw_threading
 from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
-SWITCHES = []
+SWITCHES = [
+    {'id': 'search-bar-mic', 'name': 'Microphone in the search bar',
+     'description': 'A mic button in the search bar: tap, speak, tap again, and Search runs what you said. Works when '
+                    'Search is installed as its own app too. Uses the Wizard\'s own speech-to-text.',
+     'default': False, 'issues': ['humanitylabs-org/wizard-search#29']},
+]
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}
