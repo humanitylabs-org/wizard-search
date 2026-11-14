@@ -98,6 +98,30 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual((parts.hostname, parts.port, parts.path), ('searx.invalid', 8080, '/search'))
                 self.assertEqual(urllib.parse.parse_qs(parts.query)['format'], ['json'])
 
+    def test_searxng_long_question_not_rejected(self):
+        # wizard-os#616: a full question has many content words; SearXNG results only mention a few of them.
+        fake = {'results': [
+            {'url': 'https://example.org/mb', 'title': 'Markov blanket - Wikipedia', 'content': 'A Markov blanket separates a system from its environment.'},
+            {'url': 'https://example.org/fep', 'title': 'Free energy principle', 'content': 'Simple systems such as cells have a Markov blanket.'},
+            {'url': 'https://example.org/c', 'title': 'Do bacteria have Markov blankets?', 'content': 'Single cells as the simplest case.'}]}
+
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(fake).encode()
+        real_open = urllib.request.urlopen
+        def fake_open(req, timeout=0):
+            url = getattr(req, 'full_url', req)
+            if urllib.parse.urlsplit(str(url)).hostname != 'searx.invalid':
+                return real_open(req, timeout=timeout)
+            return R()
+        q = 'What are the most primitive systems that exert or exhibit a Markov blanket?'
+        self.assertFalse(s._relevant(q, [{'title': x['title'], 'snippet': x['content'], 'url': x['url']} for x in fake['results']]))
+        with patch.object(s, 'SEARXNG_URL', 'http://searx.invalid:8080'), patch.object(s.urllib.request, 'urlopen', fake_open):
+            code, data = self.request('/api/web?' + urllib.parse.urlencode({'q': q}))
+            self.assertEqual((code, data.get('source')), (200, 'searxng'), data)
+            self.assertEqual(len(data['results']), 3)
+
     def test_tinfoil_app_overview_switch(self):
         import tempfile
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
