@@ -159,6 +159,29 @@ class SearchTests(unittest.TestCase):
         finally:
             fake.shutdown(); fake.server_close(); tmp.cleanup(); s.TINFOIL_PROBE['at'] = 0
 
+    def test_search_bar_mic_switch_off_by_default(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
+            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'search-bar-mic')
+            self.assertEqual((sw['on'], sw['default'], sw['issues']), (False, False, ['humanitylabs-org/wizard-search#29']))
+            self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], False)
+            s._sw_set('search-bar-mic', True)
+            self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], True)
+
+    def test_search_bar_mic_uses_shared_capture_and_system_speech(self):
+        mic = (ROOT / 'web/search-mic.js').read_text()
+        app = (ROOT / 'web/app.js').read_text()
+        page = (ROOT / 'web/index.html').read_text()
+        self.assertIn('id="mic"', page)
+        self.assertIn('hidden><svg', page)  # hidden until the switch is on
+        self.assertIn('<script src="search-mic.js"></script>', page)
+        self.assertIn("d?.switches?.['search-bar-mic'] === true", app)
+        self.assertIn('WizardApp.capture.start', mic)
+        self.assertIn('WizardApp.voice.transcribe', mic)
+        self.assertIn('WizConfig.transcribe', mic)
+        for forbidden in ('SpeechRecognition', 'getUserMedia', 'MediaRecorder'):
+            self.assertNotIn(forbidden, mic)
+
     def test_provider_failure_not_empty_success(self):
         with patch.object(s, 'FIRECRAWL_URL', 'http://127.0.0.1:1/v2/search'):
             code, data = self.request('/api/web?q=provider-failure-test')
