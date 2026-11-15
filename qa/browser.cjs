@@ -21,6 +21,9 @@ const assert = require('assert');
       await page.goBack();
       await page.waitForFunction(()=>document.querySelector('[data-t="all"]').getAttribute('aria-selected')==='true');
       assert(page.url().includes('/clean/'));
+      // Results on the All tab are a layer too: Back clears the search first (issue #38).
+      await page.goBack();
+      await page.waitForFunction(()=>!document.querySelector('#empty').hidden && document.querySelector('#q').value==='');
       await page.waitForTimeout(2200);
       await page.goBack();
       await page.waitForFunction(()=>document.querySelector('#wizard-app-back-notice'));

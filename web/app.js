@@ -158,9 +158,19 @@
   WizardApp.ready({ name: 'Search', version: '0.3.5' });
 
   let mic = null; // search bar microphone, only with the owner's search-bar-mic switch on (issue #29)
+  // Back closes one layer per press: mic, image viewer, Images tab, then the search itself
+  // (query and results, back to the empty start screen). Only then does the shell leave Search (issue #38).
+  function clearSearch() {
+    S.es?.close(); S.es = null; S.seq++; S.q = ''; S.images = S.web = S.ov = null;
+    $('#q').value = ''; $('#clear').hidden = true; $('#lb').hidden = true;
+    $('#ov').innerHTML = ''; $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '';
+    const u = new URL(location.href); u.searchParams.delete('q'); u.searchParams.delete('tab');
+    history.replaceState(history.state, '', u); document.title = 'Search';
+    tab('all', false);
+  }
   WizardApp.back.register({
-    canGoBack: () => !!mic?.busy() || !$('#lb').hidden || S.tab !== 'all',
-    back: () => { if (mic?.busy()) return mic.cancel(); if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } return false; }
+    canGoBack: () => !!mic?.busy() || !$('#lb').hidden || S.tab !== 'all' || !!S.q,
+    back: () => { if (mic?.busy()) return mic.cancel(); if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } if (S.q) { clearSearch(); return true; } return false; }
   });
   const feedback = message => { $('#voice-status').hidden = !message; $('#voice-status').textContent = message; };
   configReady.then(d => { if (d?.switches?.['search-bar-mic'] === true) mic = window.SearchMic?.register({ button: $('#mic'), feedback, run: q => run(q) }) || null; });
