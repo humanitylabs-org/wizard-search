@@ -155,7 +155,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.3.5' });
+  WizardApp.ready({ name: 'Search', version: '0.3.6' });
 
   let mic = null; // search bar microphone, only with the owner's search-bar-mic switch on (issue #29)
   // Back closes one layer per press: mic, image viewer, Images tab, then the search itself
