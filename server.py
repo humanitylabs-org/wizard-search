@@ -38,6 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
+WEB_ROOT = os.path.realpath(WEB)
 PREFIX = os.environ.get("WIZARD_SEARCH_BASE", "/wizard-search").rstrip("/")
 PORT = int(os.environ.get("WIZARD_SEARCH_PORT", "9288"))
 SOCKS = os.environ.get("WIZARD_SEARCH_SOCKS", "")
@@ -917,9 +918,11 @@ class H(BaseHTTPRequestHandler):
     def _static(self, path, version=""):
         if path in ("", "/"):
             path = "/index.html"
-        f = (WEB / path.lstrip("/")).resolve()
-        if WEB not in f.parents or not f.is_file():
+        # realpath + prefix check: no path outside web/ (also through a symlink) is ever read.
+        full = os.path.realpath(os.path.join(WEB_ROOT, path.lstrip("/")))
+        if not full.startswith(WEB_ROOT + os.sep) or not os.path.isfile(full):
             return self._send(404, b"not found", "text/plain")
+        f = Path(full)
         ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
                  ".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json"}.get(f.suffix, "application/octet-stream")
         body, cache = f.read_bytes(), "no-cache"
@@ -936,11 +939,14 @@ class H(BaseHTTPRequestHandler):
 # (app.js then paints the last-known state at once and registers web/sw.js) and links the web manifest, so the
 # launch splash uses Search's own dark background and icon. Switch off: the page is byte-for-byte the plain one.
 FAST_OPEN_ASSETS = ("app.css", "app.js", "voice-input.js", "search-mic.js")
+_ASSET_FILES = {name: WEB / name for name in FAST_OPEN_ASSETS}  # only these fixed files are ever hashed
 _ASSET_TAGS = {}
 
 
 def asset_tag(name):
-    f = WEB / name
+    f = _ASSET_FILES.get(name)
+    if f is None:
+        return ""
     try:
         st = f.stat()
     except OSError:
