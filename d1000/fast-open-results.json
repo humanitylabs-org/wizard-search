@@ -1,0 +1,98 @@
+{
+  "delayMs": 1000,
+  "off1": {
+    "fcp": 2108,
+    "ready": 3087,
+    "fast": false,
+    "controlled": false,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "off2": {
+    "fcp": 2072,
+    "ready": 3063,
+    "fast": false,
+    "controlled": false,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "offOffline": "page.goto: net::ERR_EMPTY_RESPONSE at http://127.0.0.1:37921/wizard-search/",
+  "on1": {
+    "fcp": 2092,
+    "ready": 3070,
+    "fast": true,
+    "controlled": false,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "on2": {
+    "fcp": 80,
+    "ready": 61,
+    "fast": true,
+    "controlled": true,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "on3": {
+    "fcp": 76,
+    "ready": 54,
+    "fast": true,
+    "controlled": true,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "search": "Fixture result: hiking trails",
+  "backClears": true,
+  "onOffline": {
+    "fcp": 140,
+    "ready": 110,
+    "fast": true,
+    "controlled": true,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "rel1": {
+    "fcp": 88,
+    "ready": 66,
+    "fast": true,
+    "controlled": true,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "",
+    "errors": []
+  },
+  "rel2": {
+    "fcp": 100,
+    "ready": 77,
+    "fast": true,
+    "controlled": true,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "new-release",
+    "errors": []
+  },
+  "afterOff": {
+    "fcp": 2080,
+    "ready": 3062,
+    "fast": false,
+    "controlled": false,
+    "setupShown": false,
+    "status": "Optional setup: overview unavailable.",
+    "build": "new-release",
+    "errors": [],
+    "caches": [],
+    "registration": false
+  }
+}
