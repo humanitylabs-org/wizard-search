@@ -22,6 +22,7 @@ import ipaddress
 import json
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import os
+import posixpath
 import re
 import socket
 import subprocess
@@ -918,9 +919,10 @@ class H(BaseHTTPRequestHandler):
     def _static(self, path, version=""):
         if path in ("", "/"):
             path = "/index.html"
-        # realpath + prefix check: no path outside web/ (also through a symlink) is ever read.
-        full = os.path.realpath(os.path.join(WEB_ROOT, path.lstrip("/")))
-        if not full.startswith(WEB_ROOT + os.sep) or not os.path.isfile(full):
+        # Only files that really sit inside web/ are served: the request is just a key into that list (issue #46), so
+        # no path outside web/ (also through a symlink or ../) is ever opened.
+        full = web_files().get(posixpath.normpath(path.lstrip("/")))
+        if full is None:
             return self._send(404, b"not found", "text/plain")
         f = Path(full)
         ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
@@ -932,6 +934,17 @@ class H(BaseHTTPRequestHandler):
             cache = "private, max-age=31536000, immutable"  # the URL names this exact content (issue #42)
         return self._send(200, body, ctype, {"Cache-Control": cache})
 
+
+
+def web_files():
+    """{relative path: real path} of every regular file under web/ whose real path stays inside web/ (issue #46)."""
+    files = {}
+    for top, _dirs, names in os.walk(WEB_ROOT):
+        for name in names:
+            full = os.path.realpath(os.path.join(top, name))
+            if full.startswith(WEB_ROOT + os.sep) and os.path.isfile(full):
+                files[os.path.relpath(os.path.join(top, name), WEB_ROOT).replace(os.sep, "/")] = full
+    return files
 
 # ---- Fast open (switch fast-open, issue #42) ------------------------------------------------------------------------
 # With the switch on, the page names its own files by content (app.js?v=<hash>) so the phone keeps them for good and

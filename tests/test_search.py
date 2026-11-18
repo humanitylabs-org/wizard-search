@@ -248,6 +248,43 @@ class SearchTests(unittest.TestCase):
         for path in ['/SETUP.md','/setup.json','/openapi.json']:
             self.assertEqual(self.request(path)[0], 200, path)
 
+    def raw(self, path):
+        try:
+            with urllib.request.urlopen(self.base + path, timeout=5) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+
+    def test_static_serves_web_files_byte_identical(self):
+        # Issue #46: the allowlist rewrite must serve every web/ file exactly as before.
+        with patch.object(s, 'switch_on', lambda _id: False):
+            for f in sorted((ROOT / 'web').iterdir()):
+                if f.is_file():
+                    self.assertEqual(self.raw('/' + f.name), (200, f.read_bytes()), f.name)
+            self.assertEqual(self.raw('/'), (200, (ROOT / 'web' / 'index.html').read_bytes()))
+            self.assertEqual(self.raw('/x/../app.js'), (200, (ROOT / 'web' / 'app.js').read_bytes()))
+
+    def test_static_blocks_traversal_and_symlink_escape(self):
+        # Issue #46: nothing outside web/ is ever read, also not through a symlink inside web/.
+        with tempfile.TemporaryDirectory() as tmp:
+            web, outside = Path(tmp, 'web'), Path(tmp, 'secret.txt')
+            (web / 'sub').mkdir(parents=True)
+            outside.write_text('secret')
+            (web / 'ok.js').write_text('ok')
+            (web / 'sub' / 'deep.css').write_text('deep')
+            os.symlink(outside, web / 'leak.txt')
+            os.symlink(Path(tmp), web / 'up')
+            os.symlink(web / 'ok.js', web / 'alias.js')
+            with patch.object(s, 'WEB_ROOT', os.path.realpath(web)), patch.object(s, 'switch_on', lambda _id: False):
+                self.assertEqual(self.raw('/ok.js'), (200, b'ok'))
+                self.assertEqual(self.raw('/sub/deep.css'), (200, b'deep'))
+                self.assertEqual(self.raw('/alias.js'), (200, b'ok'))
+                for path in ['/leak.txt', '/up/secret.txt', '/../secret.txt', '/%2e%2e/secret.txt', '/sub/../../secret.txt',
+                             '/sub', '/missing.js', '//etc/passwd', '/sub/%2f..%2f..%2fsecret.txt']:
+                    code, body = self.raw(path)
+                    self.assertEqual(code, 404, path)
+                    self.assertNotIn(b'secret', body, path)
+
     def test_cross_origin_rejected(self):
         self.assertEqual(self.request('/mcp', {'id':1,'method':'tools/list'}, {'Origin':'https://untrusted.example'})[0], 403)
 
