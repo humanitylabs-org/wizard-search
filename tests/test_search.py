@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import tempfile
 from pathlib import Path
 import threading
 import unittest
@@ -167,6 +168,49 @@ class SearchTests(unittest.TestCase):
             self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], False)
             s._sw_set('search-bar-mic', True)
             self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], True)
+
+    def test_fast_open_switch_off_by_default_and_plain_page(self):
+        # Issue #42: off by default, and with it off the page is exactly the plain one (no worker, no manifest).
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
+            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'fast-open')
+            self.assertIs(sw['on'], False); self.assertIn('humanitylabs-org/wizard-search#42', sw['issues'])
+            self.assertIs(self.request('/api/config')[1]['switches']['fast-open'], False)
+            with urllib.request.urlopen(self.base + '/') as r:
+                self.assertEqual(r.read(), (ROOT / 'web/index.html').read_bytes())
+                self.assertEqual(r.headers['Cache-Control'], 'no-cache')
+
+    def test_fast_open_page_versioned_assets_and_worker(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
+            s._sw_set('fast-open', True)
+            with urllib.request.urlopen(self.base + '/?q=x') as r:
+                page = r.read().decode(); self.assertEqual(r.headers['Cache-Control'], 'no-cache')
+            self.assertIn('data-fast-open', page)
+            self.assertIn('<link rel="manifest" href="manifest.webmanifest">', page)
+            tag = s.asset_tag('app.js')
+            self.assertRegex(tag, r'^[0-9a-f]{12}$')
+            self.assertIn('src="app.js?v=%s"' % tag, page)
+            self.assertIn('href="app.css?v=%s"' % s.asset_tag('app.css'), page)
+            # The shared client stays where the gateway serves it, still first in <head> (skins paint as before).
+            self.assertLess(page.index('/wizard-os-home/core/app-client.js'), page.index('<meta charset'))
+            with urllib.request.urlopen(self.base + '/app.js?v=' + tag) as r:
+                self.assertEqual(r.headers['Cache-Control'], 'private, max-age=31536000, immutable')
+            with urllib.request.urlopen(self.base + '/app.js?v=000000000000') as r:  # a stale tag is never kept for good
+                self.assertEqual(r.headers['Cache-Control'], 'no-cache')
+            with urllib.request.urlopen(self.base + '/sw.js?v=0.3.6') as r:
+                self.assertEqual(r.headers['Cache-Control'], 'no-cache')
+                worker = r.read().decode()
+            with urllib.request.urlopen(self.base + '/manifest.webmanifest') as r:
+                man = json.loads(r.read()); self.assertEqual(r.headers['Content-Type'], 'application/manifest+json')
+            self.assertEqual(man['background_color'], '#0b0b14'); self.assertEqual(man['scope'], './')
+            # Worker: own cache prefix and scope only; searches, images and settings stay network-only.
+            self.assertIn("PREFIX = 'wizard-search-shell-'", worker)
+            self.assertIn('api\\/|thumb\\/|img\\/', worker)
+            app = (ROOT / 'web/app.js').read_text()
+            self.assertIn("d.switches?.['fast-open'] === true", app)
+            self.assertIn("sw.register(`${BASE}sw.js?v=${SEARCH_VERSION}`", app)
+            # The worker's cache follows the release: its version is the one Search reports.
+            reported = app.split("WizardApp.ready({ name: 'Search', version: '")[1].split("'")[0]
+            self.assertIn("const SEARCH_VERSION = '%s'" % reported, app)
 
     def test_search_bar_mic_uses_shared_capture_and_system_speech(self):
         mic = (ROOT / 'web/search-mic.js').read_text()

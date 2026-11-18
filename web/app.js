@@ -9,7 +9,14 @@
   // Search owns its result viewer; shared Back owns the exit boundary.
   const shellViewer = () => null;
   const setupText = 'Setup required — configure this capability using the setup instructions above.';
-  const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
+  // Fast open (owner switch fast-open, issue #42): the server marks the page; Search then paints the last-known
+  // provider state at once, keeps its shell in a scoped worker (sw.js) and refreshes everything a moment later.
+  const SEARCH_VERSION = '0.3.6';
+  const FAST = !!document.documentElement.hasAttribute?.('data-fast-open');
+  const LAST = 'wizard-search:last';
+  const lastSeen = (() => { if (!FAST) return null; try { return JSON.parse(window.localStorage.getItem(LAST) || 'null'); } catch (_) { return null; } })();
+  const remember = (k, v) => { if (!FAST || !v) return; try { const o = JSON.parse(window.localStorage.getItem(LAST) || 'null') || {}; o[k] = v; window.localStorage.setItem(LAST, JSON.stringify(o)); } catch (_) {} };
+  function paintConfig(d) {
     S.config = d;
     const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
     $('#setup-status').textContent = d.state === 'setup_required' ? 'Setup required: connect a search provider.' : missing.length ? `Optional setup: ${missing.join(', ')} unavailable.` : 'Search providers configured.';
@@ -17,8 +24,30 @@
     $('#setup').hidden = d.state !== 'setup_required';
     $('#ov').hidden = !d.capabilities.overview;
     if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure /wizard-os-home/core/app-client.js at the gateway.'; }
+    if (FAST) document.documentElement.setAttribute('data-config-known', '');
+  }
+  if (lastSeen?.config?.capabilities) paintConfig(lastSeen.config);
+  const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
+    paintConfig(d); remember('config', d);
     return d;
-  }).catch(() => { $('#setup-status').textContent = 'Configuration check failed. Reload to retry.'; return null; });
+  }).catch(() => {
+    if (FAST && S.config) return null; // offline or a slow tailnet: keep the last-known screen, results say what failed
+    $('#setup-status').textContent = 'Configuration check failed. Reload to retry.';
+    if (FAST) { $('#setup').hidden = false; document.documentElement.setAttribute('data-config-known', ''); }
+    return null;
+  });
+  // A search waits for the provider check only when there is no last-known answer to go on.
+  const configKnown = FAST && S.config ? Promise.resolve(S.config) : configReady;
+  // A sandboxed (opaque-origin) frame throws on serviceWorker and caches: no worker there, plain page as before.
+  const sw = (() => { try { return window.navigator?.serviceWorker || null; } catch (_) { return null; } })();
+  if (sw && FAST) window.addEventListener('load', () => sw.register(`${BASE}sw.js?v=${SEARCH_VERSION}`, { scope: BASE, updateViaCache: 'none' }).catch(() => {}));
+  // Switch turned off: drop Search's own worker, caches and last-known state, so the next open is the plain page.
+  if (sw) configReady.then(d => {
+    if (!d || d.switches?.['fast-open'] === true) return;
+    try { window.localStorage.removeItem(LAST); } catch (_) {}
+    sw.getRegistration(BASE).then(r => { if (r && new URL(r.scope).pathname === BASE) r.unregister(); }).catch(() => {});
+    try { window.caches?.keys().then(ks => ks.filter(k => k.startsWith('wizard-search-shell-')).forEach(k => window.caches.delete(k))).catch(() => {}); } catch (_) {}
+  });
 
   // Optional AI overviews: only offered when the Tinfoil app is on this box. Turning on asks Tinfoil (sibling app,
   // same origin, owner's page) for a Search-only token and hands it to Search's server; Turn off revokes it.
@@ -34,17 +63,19 @@
     $('#ai-sub').textContent = p.mode === 'proxy' ? 'On · set up by your server admin.' : on ? `On · private answers from Tinfoil (${p.model}).`
       : t.connected ? 'A short private answer above your results, from Tinfoil. Uses your Tinfoil credit.' : 'Connect Tinfoil in the Tinfoil app first, then turn this on here.';
     if (S.config) { S.config.capabilities.overview = on && S.config.state !== 'setup_required'; $('#ov').hidden = !S.config.capabilities.overview; }
+    return p;
   }
-  const aiReady = configReady.then(() => fetch(`${BASE}api/overview-provider`).then(r => r.json())).then(paintAi).catch(() => {});
+  if (lastSeen?.ai && S.config) paintAi(lastSeen.ai);
+  const aiReady = configReady.then(() => fetch(`${BASE}api/overview-provider`).then(r => r.json())).then(p => { paintAi(p); remember('ai', p); }).catch(() => {});
   $('#ai-btn').addEventListener('click', async () => {
     const b = $('#ai-btn'), on = b.getAttribute('aria-pressed') === 'true'; b.disabled = true;
     try {
       if (on) {
-        paintAi(await post(`${BASE}api/overview-provider`, { provider: 'off' }));
+        remember('ai', paintAi(await post(`${BASE}api/overview-provider`, { provider: 'off' })));
         post(`${TINFOIL}api/app-tokens/remove`, { app: 'wizard-search' }).catch(() => {});
       } else {
         const g = await post(`${TINFOIL}api/app-tokens`, { app: 'wizard-search' });
-        paintAi(await post(`${BASE}api/overview-provider`, { provider: 'tinfoil', token: g.token, models: g.models, recommended: g.recommended }));
+        remember('ai', paintAi(await post(`${BASE}api/overview-provider`, { provider: 'tinfoil', token: g.token, models: g.models, recommended: g.recommended })));
       }
     } catch (e) { $('#ai-sub').textContent = `Could not change AI overviews (${e.message}). Check the Tinfoil app and try again.`; }
     finally { b.disabled = false; }
@@ -64,7 +95,7 @@
     window.scrollTo(0, 0);
   }
   async function run(q, t) {
-    await configReady;
+    await configKnown;
     q = String(q || '').trim(); if (!q) return;
     S.q = q; S.images = S.web = S.ov = null; S.seq++;
     $('#q').value = q; $('#clear').hidden = false; $('#q').blur();
