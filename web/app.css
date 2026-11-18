@@ -84,3 +84,5 @@ main{padding:4px 12px 40px}
 .ai-btn{flex:none;min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--link);font:inherit;font-weight:600;cursor:pointer}
 .ai-btn[aria-pressed="true"]{color:var(--ink2)}
 .ai-btn:disabled{opacity:.5}
+/* Fast open (switch fast-open): the setup note waits for a known provider state instead of showing by default. */
+html[data-fast-open]:not([data-config-known]) #setup{display:none}

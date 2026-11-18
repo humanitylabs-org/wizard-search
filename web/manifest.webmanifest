@@ -1,0 +1,23 @@
+{
+  "id": "./",
+  "name": "Search",
+  "short_name": "Search",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0b14",
+  "theme_color": "#0b0b14",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    }
+  ]
+}

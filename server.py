@@ -38,6 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
+WEB_ROOT = os.path.realpath(WEB)
 PREFIX = os.environ.get("WIZARD_SEARCH_BASE", "/wizard-search").rstrip("/")
 PORT = int(os.environ.get("WIZARD_SEARCH_PORT", "9288"))
 SOCKS = os.environ.get("WIZARD_SEARCH_SOCKS", "")
@@ -888,7 +889,7 @@ class H(BaseHTTPRequestHandler):
                 if "dl" in qs:  # Save: a named attachment, so Android's download manager files it under that name
                     extra["Content-Disposition"] = attachment(qs["dl"][0], got[0])
                 return self._send(200, got[1], got[0], extra)
-            return self._static(path)
+            return self._static(path, (qs.get("v") or [""])[0])
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": type(e).__name__})
 
@@ -914,15 +915,56 @@ class H(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
-    def _static(self, path):
+    def _static(self, path, version=""):
         if path in ("", "/"):
             path = "/index.html"
-        f = (WEB / path.lstrip("/")).resolve()
-        if WEB not in f.parents or not f.is_file():
+        # realpath + prefix check: no path outside web/ (also through a symlink) is ever read.
+        full = os.path.realpath(os.path.join(WEB_ROOT, path.lstrip("/")))
+        if not full.startswith(WEB_ROOT + os.sep) or not os.path.isfile(full):
             return self._send(404, b"not found", "text/plain")
+        f = Path(full)
         ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
                  ".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json"}.get(f.suffix, "application/octet-stream")
-        return self._send(200, f.read_bytes(), ctype, {"Cache-Control": "no-cache"})
+        body, cache = f.read_bytes(), "no-cache"
+        if f.name == "index.html" and switch_on("fast-open"):
+            body = fast_open_page(body)
+        elif version and f.name in FAST_OPEN_ASSETS and version == asset_tag(f.name):
+            cache = "private, max-age=31536000, immutable"  # the URL names this exact content (issue #42)
+        return self._send(200, body, ctype, {"Cache-Control": cache})
+
+
+# ---- Fast open (switch fast-open, issue #42) ------------------------------------------------------------------------
+# With the switch on, the page names its own files by content (app.js?v=<hash>) so the phone keeps them for good and
+# asks again only when a release changes them; the page itself stays short-lived. The page is marked data-fast-open
+# (app.js then paints the last-known state at once and registers web/sw.js) and links the web manifest, so the
+# launch splash uses Search's own dark background and icon. Switch off: the page is byte-for-byte the plain one.
+FAST_OPEN_ASSETS = ("app.css", "app.js", "voice-input.js", "search-mic.js")
+_ASSET_FILES = {name: WEB / name for name in FAST_OPEN_ASSETS}  # only these fixed files are ever hashed
+_ASSET_TAGS = {}
+
+
+def asset_tag(name):
+    f = _ASSET_FILES.get(name)
+    if f is None:
+        return ""
+    try:
+        st = f.stat()
+    except OSError:
+        return ""
+    key = (name, st.st_mtime_ns, st.st_size)
+    if key not in _ASSET_TAGS:
+        _ASSET_TAGS[key] = hashlib.sha256(f.read_bytes()).hexdigest()[:12]
+    return _ASSET_TAGS[key]
+
+
+def fast_open_page(page):
+    page = page.replace(b'<html lang="en" data-app="wizard-search">', b'<html lang="en" data-app="wizard-search" data-fast-open>', 1)
+    page = page.replace(b'<link rel="stylesheet"', b'<link rel="manifest" href="manifest.webmanifest">\n<link rel="stylesheet"', 1)
+    for name in FAST_OPEN_ASSETS:
+        tag = asset_tag(name)
+        if tag:
+            page = page.replace(b'="%s"' % name.encode(), b'="%s?v=%s"' % (name.encode(), tag.encode()))
+    return page
 
 # ---- wizard.app-switches/1 ------------------------------------------------------------------------------------------
 # Owner feature switches for the Tracker's Try it (wizard-os docs/APP_SWITCHES.md). Shared block: the same text ships in
@@ -945,6 +987,11 @@ SWITCHES = [
      'description': 'A mic button in the search bar: tap, speak, tap again, and Search runs what you said. Works when '
                     'Search is installed as its own app too. Uses the Wizard\'s own speech-to-text.',
      'default': False, 'issues': ['humanitylabs-org/wizard-search#29']},
+    {'id': 'fast-open', 'name': 'Open Search instantly',
+     'description': 'Search opens in about a second on your phone, also on a slow connection or offline: it shows its '
+                    'last screen straight away and refreshes a moment later. A new Search version still arrives on '
+                    'the next open.',
+     'default': False, 'issues': ['humanitylabs-org/wizard-search#42']},
 ]
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
