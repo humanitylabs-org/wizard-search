@@ -86,3 +86,12 @@ main{padding:4px 12px 40px}
 .ai-btn:disabled{opacity:.5}
 /* Fast open (switch fast-open): the setup note waits for a known provider state instead of showing by default. */
 html[data-fast-open]:not([data-config-known]) #setup{display:none}
+/* Bottom search bar (switch bottom-search-bar, issue #51): on a phone the field sits at the bottom, on an opaque
+   panel above the keyboard and the nav bar; results scroll above it, All / Images stay at the top. */
+@media (max-width:820px){
+html[data-bottom-bar] .top{padding-top:6px}
+html[data-bottom-bar] .top::after{content:"";position:fixed;left:0;right:0;bottom:0;z-index:0;height:calc(66px + var(--kb,0px) + env(safe-area-inset-bottom,0px));background:var(--bg);border-top:1px solid var(--line)}
+html[data-bottom-bar] .bar{position:fixed;left:12px;right:12px;bottom:calc(11px + var(--kb,0px) + env(safe-area-inset-bottom,0px));z-index:1}
+html[data-bottom-bar] main{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
+html[data-bottom-bar] .tabs{padding-top:2px}
+}
