@@ -99,7 +99,7 @@
     q = String(q || '').trim(); if (!q) return;
     S.q = q; S.images = S.web = S.ov = null; S.seq++;
     $('#q').value = q; $('#clear').hidden = false; $('#q').blur();
-    if (S.config?.capabilities.overview) $('#ov').innerHTML = shimmer(); $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
+    $('#ov').hidden = !S.config?.capabilities.overview; if (S.config?.capabilities.overview) $('#ov').innerHTML = shimmer(); $('#web').innerHTML = ''; $('#strip').innerHTML = ''; $('#grid').innerHTML = '<p class="note">Finding images…</p>';
     tab(t || S.tab);
   }
   function ensure() {
@@ -130,6 +130,9 @@
   function paintOv() {
     const d = S.ov, el = $('#ov');
     if (!d || d === 'loading' || (d.streaming && !d.answer)) { el.innerHTML = shimmer(); return; }
+    // Nothing to say (the sources don't answer it, even after a rewritten retry): no box at all.
+    el.hidden = !S.config?.capabilities.overview || (!d.streaming && !d.answer && d.error === 'no answer');
+    if (el.hidden) { el.innerHTML = ''; return; }
     if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'setup_required' ? setupText : d.error === 'no results' ? 'No sources found for an overview.' : 'Overview unavailable right now.'}</p>`; return; }
     const src = Object.fromEntries((d.sources || []).map(s => [s.n, s]));
     const body = d.answer.replace(/【(\d+)[^】]*】/g, '[$1]').split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d+)\]/g, (m, n) => src[n] ? `<a class="cite" href="${esc(src[n].url)}" target="_blank" rel="noopener noreferrer" title="${esc(src[n].title)}">${n}</a>` : '')}</p>`).join('');
