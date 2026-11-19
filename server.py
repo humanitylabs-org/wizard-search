@@ -494,7 +494,66 @@ OVERVIEW_SYSTEM = """You write the short answer box at the top of a search resul
 Answer the query directly from the numbered sources. 2 to 5 sentences, plain words, no preamble, no headings.
 Cite sources inline as [1], [2] right after the claim they support. Use only facts the sources support.
 If the query is a name, place or thing, say what it is. If it asks for options or "best", name the top few.
-If the sources do not answer it, say so in one sentence. Today is %s."""
+If the sources do not answer it at all, reply with exactly NO_ANSWER and nothing else. Today is %s."""
+
+REWRITE_SYSTEM = ("Turn the user's question into a short web search query (2 to 6 words) that finds pages answering it. "
+                  "Drop filler words, keep the topic, fix obvious typos or a cut-off last word. Reply with the query only, no quotes.")
+NO_ANSWER = "NO_ANSWER"
+# The model sometimes ignores the sentinel and writes a refusal sentence; a short one like that is no answer either.
+_NOANS_RE = re.compile(r"^\W*(?:no_answer|(?:none of )?the (?:provided |given )?sources? (?:do|does|did)(?: not|n't)|"
+                       r"(?:the )?sources? (?:provided )?(?:do|does)(?: not|n't)|i (?:could|can)(?: not|n't|not) find|"
+                       r"there is no (?:information|answer))", re.I)
+
+
+def _is_no_answer(text: str) -> bool:
+    t = text.strip()
+    return not t or t.upper().startswith(NO_ANSWER) or (len(t) < 200 and bool(_NOANS_RE.match(t)))
+
+
+def _may_be_no_answer(text: str) -> bool:
+    """While streaming: could this beginning still turn into a no-answer reply? (then hold it back)"""
+    t = text.lstrip()
+    if len(t) >= 200:
+        return False
+    if NO_ANSWER.startswith(t.upper()[:len(NO_ANSWER)]) or t.upper().startswith(NO_ANSWER):
+        return True
+    low = t.lower()
+    starts = ("the sources", "the provided sources", "the given sources", "none of the sources", "sources do",
+              "sources don", "the source ", "i could not", "i couldn't", "i can't", "i cannot", "there is no")
+    return any(s.startswith(low) or low.startswith(s) for s in starts)
+
+
+def _rewrite_query(q: str) -> str:
+    """A plain question ("what do you call someone who does QA") makes the web lanes return pages about "do";
+    a short topical query ("QA job title") finds the answer. Falls back to dropping filler words."""
+    rq = ""
+    try:
+        rq = _llm((llm() or {}).get("model", LLM_MODEL), [{"role": "system", "content": REWRITE_SYSTEM},
+                                                        {"role": "user", "content": q}], 60, 15)
+    except Exception:
+        rq = ""
+    rq = " ".join(re.sub(r"^[\"'`]+|[\"'`.]+$", "", (rq.splitlines() or [""])[0]).split())[:120]
+    if not rq or rq.lower() == q.lower().strip():
+        words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.'-]*", q) if w.lower() not in STOP]
+        rq = " ".join(words)
+    return rq if rq and rq.lower() != q.lower().strip() else ""
+
+
+def _retry_rows(q: str, rows: list[dict]) -> tuple[str, list[dict]]:
+    """Second try: results for the rewritten query first, then the original ones, de-duplicated (up to 10)."""
+    rq = _rewrite_query(q)
+    if not rq:
+        return "", []
+    try:
+        fresh = cached(WEB_CACHE, rq, web_search)["results"]
+    except Exception:
+        fresh = []
+    seen, out = set(), []
+    for r in fresh[:8] + rows:
+        if r["url"] not in seen:
+            seen.add(r["url"])
+            out.append(r)
+    return rq, out[:10] if fresh else []
 
 
 def _overview_request(q: str, rows: list[dict], stream: bool) -> urllib.request.Request:
@@ -517,34 +576,33 @@ def _fix_cites(text: str) -> str:
     return re.sub(r"【(\d+)[^】]*】", r"[\1]", text)
 
 
+def _ask(q: str, rows: list[dict]) -> str:
+    with urllib.request.urlopen(_overview_request(q, rows, False), timeout=40) as r:  # nosec B310 loopback
+        d = json.load(r)
+    return _fix_cites((d["choices"][0]["message"].get("content") or "").strip())
+
+
 def overview(q: str) -> dict:
     web = cached(WEB_CACHE, q, web_search)
     rows = web["results"][:8]
     if not rows:
         return {"q": q, "answer": "", "sources": [], "error": "no results"}
     t0 = time.time()
-    with urllib.request.urlopen(_overview_request(q, rows, False), timeout=40) as r:  # nosec B310 loopback
-        d = json.load(r)
-    answer = _fix_cites((d["choices"][0]["message"].get("content") or "").strip())
-    return {"q": q, "answer": answer, "sources": _sources(rows), "model": (llm() or {}).get("model", LLM_MODEL), "ms": int((time.time() - t0) * 1000)}
+    model = (llm() or {}).get("model", LLM_MODEL)
+    answer = _ask(q, rows)
+    if _is_no_answer(answer):
+        rq, more = _retry_rows(q, rows)
+        if more:
+            rows, answer = more, _ask(q, more)
+    if _is_no_answer(answer):
+        return {"q": q, "answer": "", "sources": [], "error": "no answer", "model": model, "ms": int((time.time() - t0) * 1000)}
+    return {"q": q, "answer": answer, "sources": _sources(rows), "model": model, "ms": int((time.time() - t0) * 1000)}
 
 
-def overview_stream(q: str, emit) -> None:
-    """Server-sent events: `sources` as soon as results land, then `delta` tokens, then `done`."""
-    hit = OVR_CACHE.get(q.lower())
-    if hit is not None:
-        emit("sources", {"sources": hit.get("sources", []), "source": "cache"})
-        emit("delta", {"t": hit.get("answer", "")})
-        emit("done", {"model": hit.get("model", ""), "cached": True, "error": hit.get("error", "")})
-        return
-    t0 = time.time()
-    web = cached(WEB_CACHE, q, web_search)
-    rows = web["results"][:8]
-    emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000)})
-    if not rows:
-        emit("done", {"error": "no results"})
-        return
-    parts = []
+def _stream_answer(q: str, rows: list[dict], emit) -> str:
+    """Stream the answer, holding back the first words while they could still be a "sources don't answer" reply
+    (that reply is never shown: the caller retries or hides the box)."""
+    parts, held = [], True
     with urllib.request.urlopen(_overview_request(q, rows, True), timeout=40) as r:  # nosec B310 loopback
         for raw in r:
             line = raw.decode("utf-8", "ignore").strip()
@@ -554,11 +612,49 @@ def overview_stream(q: str, emit) -> None:
                 delta = (json.loads(line[5:]).get("choices") or [{}])[0].get("delta", {}).get("content")
             except ValueError:
                 continue
-            if delta:
-                parts.append(delta)
+            if not delta:
+                continue
+            parts.append(delta)
+            if held:
+                text = "".join(parts)
+                if text.strip() and not _may_be_no_answer(text):
+                    held = False
+                    emit("delta", {"t": text})
+            else:
                 emit("delta", {"t": delta})
     answer = _fix_cites("".join(parts).strip())
+    if held and not _is_no_answer(answer):
+        emit("delta", {"t": "".join(parts)})
+    return answer
+
+
+def overview_stream(q: str, emit) -> None:
+    """Server-sent events: `sources` as soon as results land, then `delta` tokens, then `done`."""
+    hit = OVR_CACHE.get(q.lower())
+    if hit is not None:
+        emit("sources", {"sources": hit.get("sources", []), "source": "cache"})
+        emit("delta", {"t": hit.get("answer", "")})
+        emit("done", {"model": hit.get("model", ""), "cached": True, "error": hit.get("error", ""), "answer": hit.get("answer", "")})
+        return
+    t0 = time.time()
+    web = cached(WEB_CACHE, q, web_search)
+    rows = web["results"][:8]
+    emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000)})
+    if not rows:
+        emit("done", {"error": "no results"})
+        return
     model = (llm() or {}).get("model", LLM_MODEL)
+    answer = _stream_answer(q, rows, emit)
+    if _is_no_answer(answer):
+        rq, more = _retry_rows(q, rows)
+        if more:
+            rows = more
+            emit("sources", {"sources": _sources(rows), "source": "rewrite", "rewritten": rq})
+            answer = _stream_answer(q, rows, emit)
+    if _is_no_answer(answer):
+        OVR_CACHE.put(q.lower(), {"q": q, "answer": "", "sources": [], "model": model, "error": "no answer"})
+        emit("done", {"model": model, "ms": int((time.time() - t0) * 1000), "answer": "", "error": "no answer"})
+        return
     OVR_CACHE.put(q.lower(), {"q": q, "answer": answer, "sources": _sources(rows), "model": model})
     emit("done", {"model": model, "ms": int((time.time() - t0) * 1000), "answer": answer})
 
