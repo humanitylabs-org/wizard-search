@@ -196,7 +196,7 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual(r.headers['Cache-Control'], 'private, max-age=31536000, immutable')
             with urllib.request.urlopen(self.base + '/app.js?v=000000000000') as r:  # a stale tag is never kept for good
                 self.assertEqual(r.headers['Cache-Control'], 'no-cache')
-            with urllib.request.urlopen(self.base + '/sw.js?v=0.3.8') as r:
+            with urllib.request.urlopen(self.base + '/sw.js?v=0.3.9') as r:
                 self.assertEqual(r.headers['Cache-Control'], 'no-cache')
                 worker = r.read().decode()
             with urllib.request.urlopen(self.base + '/manifest.webmanifest') as r:
