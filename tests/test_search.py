@@ -212,6 +212,29 @@ class SearchTests(unittest.TestCase):
             reported = app.split("WizardApp.ready({ name: 'Search', version: '")[1].split("'")[0]
             self.assertIn("const SEARCH_VERSION = '%s'" % reported, app)
 
+    def test_bottom_search_bar_switch_off_by_default(self):
+        # Issue #51: off by default (plain page, field on top); on, the page is marked data-bottom-bar before it paints.
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
+            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'bottom-search-bar')
+            self.assertEqual((sw['on'], sw['default'], sw['issues']), (False, False, ['humanitylabs-org/wizard-search#51']))
+            self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], False)
+            with urllib.request.urlopen(self.base + '/') as r:
+                self.assertEqual(r.read(), (ROOT / 'web/index.html').read_bytes())
+            s._sw_set('bottom-search-bar', True)
+            self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], True)
+            with urllib.request.urlopen(self.base + '/') as r:
+                page = r.read().decode()
+            self.assertIn('<html lang="en" data-app="wizard-search" data-bottom-bar>', page)
+            s._sw_set('fast-open', True)  # both on: one <html> tag carrying both marks
+            with urllib.request.urlopen(self.base + '/') as r:
+                page = r.read().decode()
+            self.assertIn('<html lang="en" data-app="wizard-search" data-bottom-bar data-fast-open>', page)
+        app = (ROOT / 'web/app.js').read_text()
+        css = (ROOT / 'web/app.css').read_text()
+        self.assertIn("d.switches?.['bottom-search-bar'] === true", app)
+        self.assertIn('html[data-bottom-bar] .bar{position:fixed', css)
+        self.assertIn('env(safe-area-inset-bottom', css)
+
     def test_search_bar_mic_uses_shared_capture_and_system_speech(self):
         mic = (ROOT / 'web/search-mic.js').read_text()
         app = (ROOT / 'web/app.js').read_text()
