@@ -3,6 +3,8 @@ when that also fails the box is hidden ("no answer") instead of saying "The sour
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -52,8 +54,63 @@ class _Resp(io.BytesIO):
         return iter(self._lines)
 
 
+SONG_PAGES = [{'url': 'https://help.example/hum', 'title': 'Hum to search', 'host': 'help.example',
+               'snippet': 'Hum, whistle or sing a melody and the app finds the song.'}]
+SONG_Q = "that thing where you remember a song from your childhood but can't remember the name or the singer"
+WORD_Q = "what's the word for when you feel nostalgic for a time you never lived through"
+
+
 def fake_web(q):
-    return {'q': q, 'source': 'fake', 'results': QA_PAGES if 'job' in q.lower() else DO_PAGES}
+    low = q.lower()
+    return {'q': q, 'source': 'fake', 'results': QA_PAGES if 'job' in low else SONG_PAGES if 'identify' in low else DO_PAGES}
+
+
+class IntentLLM(FakeLLM):
+    """A model that answers what the person means: cites the hum page when it has it, otherwise answers from
+    general knowledge only if the overview prompt allows it (the #58 prompt does; the old one said NO_ANSWER)."""
+    def __init__(self, rewrites):
+        super().__init__()
+        self.rewrites = rewrites
+
+    def reply(self, body):
+        system, user = body['messages'][0]['content'], body['messages'][1]['content']
+        if system == s.REWRITE_SYSTEM:
+            self.calls.append(('rewrite', user))
+            return self.rewrites.get(user, user)
+        self.calls.append(('answer', user))
+        query = user.split('\n', 1)[0]
+        if 'asdkjh' in query:
+            return 'NO_ANSWER'
+        if 'general knowledge' not in system:
+            return 'NO_ANSWER'
+        if 'Hum to search' in user:
+            return 'You are trying to identify a forgotten song: hum it into a hum-to-search app [1], or ask r/tipofmytongue.'
+        if 'nostalgic' in query:
+            return 'The word is anemoia: nostalgia for a time you never lived through.'
+        return 'NO_ANSWER'
+
+
+@unittest.skipUnless(shutil.which('node'), 'node not installed')
+class OverviewBoxTests(unittest.TestCase):
+    """The page side: the box never vanishes after the shimmer, and an uncited answer says where it came from."""
+    @classmethod
+    def setUpClass(cls):
+        out = subprocess.run(['node', str(ROOT / 'tests/ov_harness.cjs')], capture_output=True, text=True, timeout=30)
+        if out.returncode:
+            raise AssertionError(out.stderr)
+        cls.r = json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_no_answer_shows_one_line_instead_of_vanishing(self):
+        self.assertFalse(self.r['no_answer']['hidden'])
+        self.assertIn('No overview for this search.', self.r['no_answer']['html'])
+
+    def test_answer_without_sources_is_labelled(self):
+        self.assertIn('anemoia', self.r['ungrounded']['html'])
+        self.assertIn('From the model, not the sources', self.r['ungrounded']['html'])
+
+    def test_cited_answer_keeps_chips_and_no_label(self):
+        self.assertIn('class="srcs"', self.r['grounded']['html'])
+        self.assertNotIn('From the model, not the sources', self.r['grounded']['html'])
 
 
 class OverviewTests(unittest.TestCase):
@@ -121,6 +178,41 @@ class OverviewTests(unittest.TestCase):
         self.assertFalse(s._may_be_no_answer('A QA analyst'))
         self.assertTrue(s._may_be_no_answer('The sour'))
         self.assertTrue(s._may_be_no_answer('NO_A'))
+
+    def test_long_song_description_answers_the_intent(self):
+        fake = IntentLLM({SONG_Q: 'identify song by humming'})
+        with patch.object(s.urllib.request, 'urlopen', fake):
+            d = s.overview(SONG_Q)
+            events = self.stream(SONG_Q)
+        self.assertEqual(d.get('error', ''), '')
+        self.assertIn('identify a forgotten song', d['answer'])
+        self.assertEqual(d['sources'][0]['url'], 'https://help.example/hum')
+        # intent query worked out alongside the first search: one answer call, no failed first try
+        self.assertEqual(sorted(c[0] for c in fake.calls[:2]), ['answer', 'rewrite'])
+        self.assertEqual([ev for ev, _ in events].count('sources'), 1)
+        self.assertEqual(events[-1][1].get('error', ''), '')
+        self.assertIn('forgotten song', ''.join(x['t'] for ev, x in events if ev == 'delta'))
+
+    def test_word_for_a_feeling_answers_from_general_knowledge(self):
+        fake = IntentLLM({WORD_Q: 'word nostalgia never lived'})
+        with patch.object(s.urllib.request, 'urlopen', fake):
+            d = s.overview(WORD_Q)
+        self.assertEqual(d.get('error', ''), '')
+        self.assertIn('anemoia', d['answer'])
+        self.assertEqual([c[0] for c in fake.calls], ['rewrite', 'answer'])
+
+    def test_gibberish_still_gets_no_answer(self):
+        fake = IntentLLM({})
+        with patch.object(s.urllib.request, 'urlopen', fake):
+            d = s.overview('asdkjh qwe')
+        self.assertEqual((d['answer'], d['error']), ('', 'no answer'))
+
+    def test_short_query_keeps_the_one_call_fast_path(self):
+        fake = IntentLLM({})
+        with patch.object(s.urllib.request, 'urlopen', fake):
+            d = s.overview('word nostalgic never lived')
+        self.assertIn('anemoia', d['answer'])
+        self.assertEqual([c[0] for c in fake.calls], ['answer'])
 
     def test_rewrite_falls_back_to_dropping_filler_words(self):
         def broken(req, timeout=0):

@@ -491,13 +491,21 @@ def _finish(q: str, rows: list[dict], source: str) -> dict:
 
 
 OVERVIEW_SYSTEM = """You write the short answer box at the top of a search results page.
-Answer the query directly from the numbered sources. 2 to 5 sentences, plain words, no preamble, no headings.
-Cite sources inline as [1], [2] right after the claim they support. Use only facts the sources support.
+First work out what the person is trying to find out (a name for a thing, a word, a product, a how-to, a definition,
+a half-remembered song, film or item), then answer that, not the literal words. 2 to 5 sentences, plain words,
+no preamble, no headings.
+Use the numbered sources where they help and cite them inline as [1], [2] right after the claim they support.
+When the sources are thin or off topic, still answer from your own general knowledge, plainly, and do not cite a
+source for anything it does not say.
 If the query is a name, place or thing, say what it is. If it asks for options or "best", name the top few.
-If the sources do not answer it at all, reply with exactly NO_ANSWER and nothing else. Today is %s."""
+Reply with exactly NO_ANSWER and nothing else only when the query is gibberish or has no answerable meaning. Today is %s."""
 
-REWRITE_SYSTEM = ("Turn the user's question into a short web search query (2 to 6 words) that finds pages answering it. "
-                  "Drop filler words, keep the topic, fix obvious typos or a cut-off last word. Reply with the query only, no quotes.")
+REWRITE_SYSTEM = ("Work out what the person is trying to find out (for a long description: the name of the thing, the word, "
+                  "the product or the how-to they are after), then write the short web search query (2 to 6 words) that "
+                  "finds pages answering it. Fix obvious typos or a cut-off last word. Reply with the query only, no quotes.")
+# Long descriptive searches ("that thing where you remember a song...") find weak pages on their literal words, so
+# they get the intent query searched alongside the original from the start. Short ones keep the one-call fast path.
+LONG_QUERY_WORDS = 9
 NO_ANSWER = "NO_ANSWER"
 # The model sometimes ignores the sentinel and writes a refusal sentence; a short one like that is no answer either.
 _NOANS_RE = re.compile(r"^\W*(?:no_answer|(?:none of )?the (?:provided |given )?sources? (?:do|does|did)(?: not|n't)|"
@@ -539,6 +547,15 @@ def _rewrite_query(q: str) -> str:
     return rq if rq and rq.lower() != q.lower().strip() else ""
 
 
+def _merge_rows(fresh: list[dict], rows: list[dict]) -> list[dict]:
+    seen, out = set(), []
+    for r in fresh[:8] + rows:
+        if r["url"] not in seen:
+            seen.add(r["url"])
+            out.append(r)
+    return out[:10]
+
+
 def _retry_rows(q: str, rows: list[dict]) -> tuple[str, list[dict]]:
     """Second try: results for the rewritten query first, then the original ones, de-duplicated (up to 10)."""
     rq = _rewrite_query(q)
@@ -548,12 +565,34 @@ def _retry_rows(q: str, rows: list[dict]) -> tuple[str, list[dict]]:
         fresh = cached(WEB_CACHE, rq, web_search)["results"]
     except Exception:
         fresh = []
-    seen, out = set(), []
-    for r in fresh[:8] + rows:
-        if r["url"] not in seen:
-            seen.add(r["url"])
-            out.append(r)
-    return rq, out[:10] if fresh else []
+    return rq, _merge_rows(fresh, rows) if fresh else []
+
+
+def _is_long(q: str) -> bool:
+    return len(q.split()) >= LONG_QUERY_WORDS
+
+
+def _overview_rows(q: str) -> tuple[dict, list[dict], str]:
+    """Results for the overview. A long descriptive query also gets its intent query, rewritten while the
+    original search runs, and those results first. Returns (original web result, rows, intent query or "")."""
+    if not _is_long(q):
+        web = cached(WEB_CACHE, q, web_search)
+        return web, web["results"][:8], ""
+    with ThreadPoolExecutor(2) as ex:
+        fw, fr = ex.submit(cached, WEB_CACHE, q, web_search), ex.submit(_rewrite_query, q)
+        web = fw.result()
+        try:
+            rq = fr.result()
+        except Exception:
+            rq = ""
+    rows = web["results"][:8]
+    if not rq:
+        return web, rows, ""
+    try:
+        fresh = cached(WEB_CACHE, rq, web_search)["results"]
+    except Exception:
+        fresh = []
+    return web, _merge_rows(fresh, rows) if fresh else rows, rq
 
 
 def _overview_request(q: str, rows: list[dict], stream: bool) -> urllib.request.Request:
@@ -583,14 +622,13 @@ def _ask(q: str, rows: list[dict]) -> str:
 
 
 def overview(q: str) -> dict:
-    web = cached(WEB_CACHE, q, web_search)
-    rows = web["results"][:8]
+    web, rows, intent = _overview_rows(q)
     if not rows:
         return {"q": q, "answer": "", "sources": [], "error": "no results"}
     t0 = time.time()
     model = (llm() or {}).get("model", LLM_MODEL)
     answer = _ask(q, rows)
-    if _is_no_answer(answer):
+    if _is_no_answer(answer) and not intent:
         rq, more = _retry_rows(q, rows)
         if more:
             rows, answer = more, _ask(q, more)
@@ -637,15 +675,15 @@ def overview_stream(q: str, emit) -> None:
         emit("done", {"model": hit.get("model", ""), "cached": True, "error": hit.get("error", ""), "answer": hit.get("answer", "")})
         return
     t0 = time.time()
-    web = cached(WEB_CACHE, q, web_search)
-    rows = web["results"][:8]
-    emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000)})
+    web, rows, intent = _overview_rows(q)
+    meta = {"rewritten": intent} if intent else {}
+    emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000), **meta})
     if not rows:
         emit("done", {"error": "no results"})
         return
     model = (llm() or {}).get("model", LLM_MODEL)
     answer = _stream_answer(q, rows, emit)
-    if _is_no_answer(answer):
+    if _is_no_answer(answer) and not intent:
         rq, more = _retry_rows(q, rows)
         if more:
             rows = more

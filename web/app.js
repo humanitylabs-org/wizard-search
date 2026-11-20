@@ -144,15 +144,15 @@
   function paintOv() {
     const d = S.ov, el = $('#ov');
     if (!d || d === 'loading' || (d.streaming && !d.answer)) { el.innerHTML = shimmer(); return; }
-    // Nothing to say (the sources don't answer it, even after a rewritten retry): no box at all.
-    el.hidden = !S.config?.capabilities.overview || (!d.streaming && !d.answer && d.error === 'no answer');
+    el.hidden = !S.config?.capabilities.overview;
     if (el.hidden) { el.innerHTML = ''; return; }
-    if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'setup_required' ? setupText : d.error === 'no results' ? 'No sources found for an overview.' : 'Overview unavailable right now.'}</p>`; return; }
+    // Never vanish after the shimmer (#58): a query the model can't make sense of gets one plain line.
+    if (!d.answer) { el.innerHTML = `<h3><i>✦</i> AI overview</h3><p class="dim">${d.error === 'setup_required' ? setupText : d.error === 'no results' ? 'No sources found for an overview.' : d.error === 'no answer' ? 'No overview for this search.' : 'Overview unavailable right now.'}</p>`; return; }
     const src = Object.fromEntries((d.sources || []).map(s => [s.n, s]));
     const body = d.answer.replace(/【(\d+)[^】]*】/g, '[$1]').split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d+)\]/g, (m, n) => src[n] ? `<a class="cite" href="${esc(src[n].url)}" target="_blank" rel="noopener noreferrer" title="${esc(src[n].title)}">${n}</a>` : '')}</p>`).join('');
     const used = new Set([...d.answer.matchAll(/\[(\d+)\]/g)].map(m => +m[1]));
     const chips = (d.sources || []).filter(s => used.has(s.n)).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"><b>${s.n}</b>${esc(s.host)}</a>`).join('');
-    el.innerHTML = `<h3><i>✦</i> AI overview</h3>${body}${d.streaming ? '<span class="caret"></span>' : ''}${chips && !d.streaming ? `<div class="srcs">${chips}</div>` : ''}${d.streaming ? '' : `<div class="meta">Private model · ${esc(d.model || '')}</div>`}`;
+    el.innerHTML = `<h3><i>✦</i> AI overview</h3>${body}${d.streaming ? '<span class="caret"></span>' : ''}${chips && !d.streaming ? `<div class="srcs">${chips}</div>` : ''}${d.streaming ? '' : `<div class="meta">${chips ? '' : 'From the model, not the sources · '}Private model · ${esc(d.model || '')}</div>`}`;
   }
   function paintWeb() {
     const d = S.web, el = $('#web');
