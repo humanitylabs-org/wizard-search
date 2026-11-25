@@ -1,4 +1,4 @@
-/* Search bar microphone (switch search-bar-mic, wizard-search#29). Tap to listen, tap again to search.
+/* Search bar microphone (wizard-search#29). Tap to listen, tap again to search.
  * The microphone is Wizard's shared capture (WizardApp.capture) and the words come from the box's own speech-to-text:
  * through the shell when Search is open inside Wizard, or the same system route (WizConfig.transcribe) when Search runs
  * as its own installed app. There is deliberately no browser speech-recognition fallback. */

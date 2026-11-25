@@ -11,7 +11,7 @@ const repo = path.resolve(__dirname, '..'), ux = path.resolve(process.env.WIZARD
 const evidence = process.env.QA_EVIDENCE || path.join(repo, 'evidence');
 fs.mkdirSync(evidence, { recursive: true });
 const data = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'search51-'));
-const setSwitch = on => fs.writeFileSync(path.join(data, 'switches.json'), JSON.stringify({ 'bottom-search-bar': on, 'search-bar-mic': true }));
+const setSwitch = on => fs.writeFileSync(path.join(data, 'switches.json'), JSON.stringify({ 'bottom-search-bar': on }));
 const port = 20000 + Math.floor(Math.random() * 20000);
 const py = spawn('python3', ['server.py'], { cwd: repo, stdio: 'ignore', env: { ...process.env, WIZARD_SEARCH_PORT: String(port),
   WIZARD_SEARCH_DATA: data, WIZARD_SWITCHES_DIR: data, SEARXNG_URL: 'http://searx.invalid:8080' } });

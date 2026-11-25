@@ -160,14 +160,21 @@ class SearchTests(unittest.TestCase):
         finally:
             fake.shutdown(); fake.server_close(); tmp.cleanup(); s.TINFOIL_PROBE['at'] = 0
 
-    def test_search_bar_mic_switch_off_by_default(self):
+    def test_search_bar_mic_is_on_for_everyone_and_its_switch_is_gone(self):
+        # Issue #29 approved: no search-bar-mic switch any more, and a saved value for it is cleared at start.
         import tempfile
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
-            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'search-bar-mic')
-            self.assertEqual((sw['on'], sw['default'], sw['issues']), (False, False, ['humanitylabs-org/wizard-search#29']))
-            self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], False)
-            s._sw_set('search-bar-mic', True)
-            self.assertIs(self.request('/api/config')[1]['switches']['search-bar-mic'], True)
+            self.assertNotIn('search-bar-mic', [x['id'] for x in s.switches_doc()['switches']])
+            self.assertNotIn('search-bar-mic', self.request('/api/config')[1]['switches'])
+            f = os.path.join(tmp, 'switches.json')
+            with open(f, 'w') as fh:
+                json.dump({'search-bar-mic': False, 'fast-open': True}, fh)
+            s._sw_forget_retired()
+            with open(f) as fh:
+                self.assertEqual(json.load(fh), {'fast-open': True})
+            s._sw_forget_retired()  # nothing left to clear: no error, file unchanged
+            with open(f) as fh:
+                self.assertEqual(json.load(fh), {'fast-open': True})
 
     def test_fast_open_switch_off_by_default_and_plain_page(self):
         # Issue #42: off by default, and with it off the page is exactly the plain one (no worker, no manifest).
@@ -240,9 +247,10 @@ class SearchTests(unittest.TestCase):
         app = (ROOT / 'web/app.js').read_text()
         page = (ROOT / 'web/index.html').read_text()
         self.assertIn('id="mic"', page)
-        self.assertIn('hidden><svg', page)  # hidden until the switch is on
+        self.assertIn('hidden><svg', page)  # hidden until the shared capture is ready
         self.assertIn('<script src="search-mic.js"></script>', page)
-        self.assertIn("d?.switches?.['search-bar-mic'] === true", app)
+        self.assertNotIn('search-bar-mic', app)
+        self.assertIn("mic = window.SearchMic?.register(", app)
         self.assertIn('WizardApp.capture.start', mic)
         self.assertIn('WizardApp.voice.transcribe', mic)
         self.assertIn('WizConfig.transcribe', mic)
