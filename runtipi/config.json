@@ -11,8 +11,8 @@
   "categories": [
     "utilities"
   ],
-  "tipi_version": 13,
-  "version": "0.3.12",
+  "tipi_version": 14,
+  "version": "0.3.13",
   "exposable": false,
   "supported_architectures": [
     "amd64",

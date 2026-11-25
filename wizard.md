@@ -4,7 +4,7 @@ id: wizard-search
 name: Search
 type: service
 category: app
-version: 0.3.12
+version: 0.3.13
 renamed_from: [search-preview]
 summary: Free private web and image search out of the box (bundled SearXNG); optional cited AI overviews with the Tinfoil app.
 license: MIT
