@@ -1063,8 +1063,7 @@ class H(BaseHTTPRequestHandler):
                  ".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json"}.get(f.suffix, "application/octet-stream")
         body, cache = f.read_bytes(), "no-cache"
         if f.name == "index.html":
-            if switch_on("fast-open"):
-                body = fast_open_page(body)
+            body = fast_open_page(body)
             if switch_on("bottom-search-bar"):
                 body = bottom_bar_page(body)
         elif version and f.name in FAST_OPEN_ASSETS and version == asset_tag(f.name):
@@ -1083,11 +1082,10 @@ def web_files():
                 files[os.path.relpath(os.path.join(top, name), WEB_ROOT).replace(os.sep, "/")] = full
     return files
 
-# ---- Fast open (switch fast-open, issue #42) ------------------------------------------------------------------------
-# With the switch on, the page names its own files by content (app.js?v=<hash>) so the phone keeps them for good and
-# asks again only when a release changes them; the page itself stays short-lived. The page is marked data-fast-open
-# (app.js then paints the last-known state at once and registers web/sw.js) and links the web manifest, so the
-# launch splash uses Search's own dark background and icon. Switch off: the page is byte-for-byte the plain one.
+# ---- Fast open (issue #42, on for everyone) --------------------------------------------------------------------------
+# The page names its own files by content (app.js?v=<hash>) so the phone keeps them for good and asks again only when
+# a release changes them; the page itself stays short-lived. app.js paints the last-known state at once and registers
+# web/sw.js; index.html links the web manifest, so the launch splash uses Search's own dark background and icon.
 FAST_OPEN_ASSETS = ("app.css", "app.js", "voice-input.js", "search-mic.js")
 _ASSET_FILES = {name: WEB / name for name in FAST_OPEN_ASSETS}  # only these fixed files are ever hashed
 _ASSET_TAGS = {}
@@ -1108,8 +1106,6 @@ def asset_tag(name):
 
 
 def fast_open_page(page):
-    page = page.replace(b'<html lang="en" data-app="wizard-search">', b'<html lang="en" data-app="wizard-search" data-fast-open>', 1)
-    page = page.replace(b'<link rel="stylesheet"', b'<link rel="manifest" href="manifest.webmanifest">\n<link rel="stylesheet"', 1)
     for name in FAST_OPEN_ASSETS:
         tag = asset_tag(name)
         if tag:
@@ -1119,7 +1115,7 @@ def fast_open_page(page):
 
 # ---- Bottom search bar (switch bottom-search-bar, issue #51) -------------------------------------------------------
 # With the switch on, the page is marked data-bottom-bar before it paints, so the field opens at the bottom (thumb
-# reach, like the Google app) with no jump; app.js keeps the mark in step with the switch for a saved (fast-open) page.
+# reach, like the Google app) with no jump; app.js keeps the mark in step with the switch for a saved page.
 def bottom_bar_page(page):
     return page.replace(b' data-app="wizard-search"', b' data-app="wizard-search" data-bottom-bar', 1)
 
@@ -1140,11 +1136,6 @@ from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
 SWITCHES = [
-    {'id': 'fast-open', 'name': 'Open Search instantly',
-     'description': 'Search opens in about a second on your phone, also on a slow connection or offline: it shows its '
-                    'last screen straight away and refreshes a moment later. A new Search version still arrives on '
-                    'the next open.',
-     'default': False, 'issues': ['humanitylabs-org/wizard-search#42']},
     {'id': 'bottom-search-bar', 'name': 'Search field at the bottom',
      'description': 'On the phone the search field (and its mic) sits at the bottom of the screen, above the keyboard, '
                     'where your thumb reaches it, like the Google app. Results scroll above it; All and Images stay '
@@ -1152,7 +1143,7 @@ SWITCHES = [
      'default': False, 'issues': ['humanitylabs-org/wizard-search#51']},
 ]
 # Switches whose feature is now on for everyone (approved at show-and-tell): their saved value is cleared at start.
-_SW_RETIRED = ('search-bar-mic',)  # wizard-search#29
+_SW_RETIRED = ('search-bar-mic', 'fast-open')  # wizard-search#29, #42
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}

@@ -168,30 +168,35 @@ class SearchTests(unittest.TestCase):
             self.assertNotIn('search-bar-mic', self.request('/api/config')[1]['switches'])
             f = os.path.join(tmp, 'switches.json')
             with open(f, 'w') as fh:
-                json.dump({'search-bar-mic': False, 'fast-open': True}, fh)
+                json.dump({'search-bar-mic': False, 'bottom-search-bar': True}, fh)
             s._sw_forget_retired()
             with open(f) as fh:
-                self.assertEqual(json.load(fh), {'fast-open': True})
+                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
             s._sw_forget_retired()  # nothing left to clear: no error, file unchanged
             with open(f) as fh:
-                self.assertEqual(json.load(fh), {'fast-open': True})
+                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
 
-    def test_fast_open_switch_off_by_default_and_plain_page(self):
-        # Issue #42: off by default, and with it off the page is exactly the plain one (no worker, no manifest).
+    def test_fast_open_is_on_for_everyone_and_its_switch_is_gone(self):
+        # Issue #42 approved: no fast-open switch any more, and a saved value for it is cleared at start.
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
-            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'fast-open')
-            self.assertIs(sw['on'], False); self.assertIn('humanitylabs-org/wizard-search#42', sw['issues'])
-            self.assertIs(self.request('/api/config')[1]['switches']['fast-open'], False)
-            with urllib.request.urlopen(self.base + '/') as r:
-                self.assertEqual(r.read(), (ROOT / 'web/index.html').read_bytes())
-                self.assertEqual(r.headers['Cache-Control'], 'no-cache')
+            self.assertNotIn('fast-open', [x['id'] for x in s.switches_doc()['switches']])
+            self.assertNotIn('fast-open', self.request('/api/config')[1]['switches'])
+            f = os.path.join(tmp, 'switches.json')
+            with open(f, 'w') as fh:
+                json.dump({'fast-open': False, 'bottom-search-bar': True}, fh)
+            s._sw_forget_retired()
+            with open(f) as fh:
+                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
+            with urllib.request.urlopen(self.base + '/') as r:  # a saved "off" never brings the plain page back
+                self.assertIn('src="app.js?v=%s"' % s.asset_tag('app.js'), r.read().decode())
+        app = (ROOT / 'web/app.js').read_text()
+        self.assertNotIn('fast-open', app); self.assertNotIn('FAST', app); self.assertNotIn('unregister', app)
+        self.assertNotIn('data-fast-open', (ROOT / 'web/app.css').read_text())
 
     def test_fast_open_page_versioned_assets_and_worker(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
-            s._sw_set('fast-open', True)
             with urllib.request.urlopen(self.base + '/?q=x') as r:
                 page = r.read().decode(); self.assertEqual(r.headers['Cache-Control'], 'no-cache')
-            self.assertIn('data-fast-open', page)
             self.assertIn('<link rel="manifest" href="manifest.webmanifest">', page)
             tag = s.asset_tag('app.js')
             self.assertRegex(tag, r'^[0-9a-f]{12}$')
@@ -213,29 +218,25 @@ class SearchTests(unittest.TestCase):
             self.assertIn("PREFIX = 'wizard-search-shell-'", worker)
             self.assertIn('api\\/|thumb\\/|img\\/', worker)
             app = (ROOT / 'web/app.js').read_text()
-            self.assertIn("d.switches?.['fast-open'] === true", app)
             self.assertIn("sw.register(`${BASE}sw.js?v=${SEARCH_VERSION}`", app)
             # The worker's cache follows the release: its version is the one Search reports.
             reported = app.split("WizardApp.ready({ name: 'Search', version: '")[1].split("'")[0]
             self.assertIn("const SEARCH_VERSION = '%s'" % reported, app)
 
     def test_bottom_search_bar_switch_off_by_default(self):
-        # Issue #51: off by default (plain page, field on top); on, the page is marked data-bottom-bar before it paints.
+        # Issue #51: off by default (field on top, no mark); on, the page is marked data-bottom-bar before it paints.
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
             sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'bottom-search-bar')
             self.assertEqual((sw['on'], sw['default'], sw['issues']), (False, False, ['humanitylabs-org/wizard-search#51']))
             self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], False)
             with urllib.request.urlopen(self.base + '/') as r:
-                self.assertEqual(r.read(), (ROOT / 'web/index.html').read_bytes())
+                self.assertIn('<html lang="en" data-app="wizard-search">', r.read().decode())
             s._sw_set('bottom-search-bar', True)
             self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], True)
             with urllib.request.urlopen(self.base + '/') as r:
                 page = r.read().decode()
             self.assertIn('<html lang="en" data-app="wizard-search" data-bottom-bar>', page)
-            s._sw_set('fast-open', True)  # both on: one <html> tag carrying both marks
-            with urllib.request.urlopen(self.base + '/') as r:
-                page = r.read().decode()
-            self.assertIn('<html lang="en" data-app="wizard-search" data-bottom-bar data-fast-open>', page)
+            self.assertIn('src="app.js?v=%s"' % s.asset_tag('app.js'), page)  # with the fast-open asset URLs
         app = (ROOT / 'web/app.js').read_text()
         css = (ROOT / 'web/app.css').read_text()
         self.assertIn("d.switches?.['bottom-search-bar'] === true", app)
@@ -288,11 +289,13 @@ class SearchTests(unittest.TestCase):
 
     def test_static_serves_web_files_byte_identical(self):
         # Issue #46: the allowlist rewrite must serve every web/ file exactly as before.
+        # index.html is the one file the server rewrites (fast-open asset URLs, issue #42): compare it as rewritten.
         with patch.object(s, 'switch_on', lambda _id: False):
+            page = s.fast_open_page((ROOT / 'web' / 'index.html').read_bytes())
             for f in sorted((ROOT / 'web').iterdir()):
                 if f.is_file():
-                    self.assertEqual(self.raw('/' + f.name), (200, f.read_bytes()), f.name)
-            self.assertEqual(self.raw('/'), (200, (ROOT / 'web' / 'index.html').read_bytes()))
+                    self.assertEqual(self.raw('/' + f.name), (200, page if f.name == 'index.html' else f.read_bytes()), f.name)
+            self.assertEqual(self.raw('/'), (200, page))
             self.assertEqual(self.raw('/x/../app.js'), (200, (ROOT / 'web' / 'app.js').read_bytes()))
 
     def test_static_blocks_traversal_and_symlink_escape(self):

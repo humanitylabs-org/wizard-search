@@ -9,13 +9,12 @@
   // Search owns its result viewer; shared Back owns the exit boundary.
   const shellViewer = () => null;
   const setupText = 'Setup required — configure this capability using the setup instructions above.';
-  // Fast open (owner switch fast-open, issue #42): the server marks the page; Search then paints the last-known
-  // provider state at once, keeps its shell in a scoped worker (sw.js) and refreshes everything a moment later.
+  // Fast open (issue #42, on for everyone): Search paints the last-known provider state at once, keeps its shell in a
+  // scoped worker (sw.js) and refreshes everything a moment later.
   const SEARCH_VERSION = '0.3.12';
-  const FAST = !!document.documentElement.hasAttribute?.('data-fast-open');
   const LAST = 'wizard-search:last';
-  const lastSeen = (() => { if (!FAST) return null; try { return JSON.parse(window.localStorage.getItem(LAST) || 'null'); } catch (_) { return null; } })();
-  const remember = (k, v) => { if (!FAST || !v) return; try { const o = JSON.parse(window.localStorage.getItem(LAST) || 'null') || {}; o[k] = v; window.localStorage.setItem(LAST, JSON.stringify(o)); } catch (_) {} };
+  const lastSeen = (() => { try { return JSON.parse(window.localStorage.getItem(LAST) || 'null'); } catch (_) { return null; } })();
+  const remember = (k, v) => { if (!v) return; try { const o = JSON.parse(window.localStorage.getItem(LAST) || 'null') || {}; o[k] = v; window.localStorage.setItem(LAST, JSON.stringify(o)); } catch (_) {} };
   function paintConfig(d) {
     S.config = d;
     const missing = Object.entries(d.capabilities).filter(([, enabled]) => !enabled).map(([name]) => name);
@@ -24,20 +23,20 @@
     $('#setup').hidden = d.state !== 'setup_required';
     $('#ov').hidden = !d.capabilities.overview;
     if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure /wizard-os-home/core/app-client.js at the gateway.'; }
-    if (FAST) document.documentElement.setAttribute('data-config-known', '');
+    document.documentElement.setAttribute('data-config-known', '');
   }
   if (lastSeen?.config?.capabilities) paintConfig(lastSeen.config);
   const configReady = fetch(`${BASE}api/config`).then(r => { if (!r.ok) throw new Error('config'); return r.json(); }).then(d => {
     paintConfig(d); remember('config', d);
     return d;
   }).catch(() => {
-    if (FAST && S.config) return null; // offline or a slow tailnet: keep the last-known screen, results say what failed
+    if (S.config) return null; // offline or a slow tailnet: keep the last-known screen, results say what failed
     $('#setup-status').textContent = 'Configuration check failed. Reload to retry.';
-    if (FAST) { $('#setup').hidden = false; document.documentElement.setAttribute('data-config-known', ''); }
+    $('#setup').hidden = false; document.documentElement.setAttribute('data-config-known', '');
     return null;
   });
   // Bottom search bar (owner switch bottom-search-bar, issue #51): the server marks the page data-bottom-bar before it
-  // paints; the live switch state wins over a saved (fast-open) copy of the page. The field then rides above the
+  // paints; the live switch state wins over a saved copy of the page. The field then rides above the
   // on-screen keyboard: --kb is how much of the layout viewport the keyboard covers (0 where the page itself resizes).
   const bottomBar = on => {
     document.documentElement.toggleAttribute?.('data-bottom-bar', !!on);
@@ -51,17 +50,10 @@
     vv.addEventListener('resize', kb); vv.addEventListener('scroll', kb);
   }
   // A search waits for the provider check only when there is no last-known answer to go on.
-  const configKnown = FAST && S.config ? Promise.resolve(S.config) : configReady;
+  const configKnown = S.config ? Promise.resolve(S.config) : configReady;
   // A sandboxed (opaque-origin) frame throws on serviceWorker and caches: no worker there, plain page as before.
   const sw = (() => { try { return window.navigator?.serviceWorker || null; } catch (_) { return null; } })();
-  if (sw && FAST) window.addEventListener('load', () => sw.register(`${BASE}sw.js?v=${SEARCH_VERSION}`, { scope: BASE, updateViaCache: 'none' }).catch(() => {}));
-  // Switch turned off: drop Search's own worker, caches and last-known state, so the next open is the plain page.
-  if (sw) configReady.then(d => {
-    if (!d || d.switches?.['fast-open'] === true) return;
-    try { window.localStorage.removeItem(LAST); } catch (_) {}
-    sw.getRegistration(BASE).then(r => { if (r && new URL(r.scope).pathname === BASE) r.unregister(); }).catch(() => {});
-    try { window.caches?.keys().then(ks => ks.filter(k => k.startsWith('wizard-search-shell-')).forEach(k => window.caches.delete(k))).catch(() => {}); } catch (_) {}
-  });
+  if (sw) window.addEventListener('load', () => sw.register(`${BASE}sw.js?v=${SEARCH_VERSION}`, { scope: BASE, updateViaCache: 'none' }).catch(() => {}));
 
   // Optional AI overviews: only offered when the Tinfoil app is on this box. Turning on asks Tinfoil (sibling app,
   // same origin, owner's page) for a Search-only token and hands it to Search's server; Turn off revokes it.
