@@ -1,5 +1,5 @@
-/* Search's own service worker (switch fast-open, issue #42). Scoped to Search's path only; registered by app.js
- * only while the owner's fast-open switch is on, and unregistered (with its caches) when it is turned off.
+/* Search's own service worker (fast open, issue #42, on for everyone). Scoped to Search's path only; registered by
+ * app.js on every open.
  * The shell (page, styles, scripts, icon, and the shared /wizard-os-home/core/ scripts the page loads) is served
  * stale-while-revalidate: the saved copy paints at once, the network copy replaces it for the next open. Searches,
  * images, settings and every /api/ call stay network-only. The cache name carries the release (sw.js?v=<version>),
