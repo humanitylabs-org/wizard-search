@@ -24,7 +24,7 @@ const server = http.createServer(async (req, res) => {
     calls.push('audio-bytes ' + bytes + ' ' + req.headers['content-type']);
     return json(res, 200, { text: 'best hiking trails near Ljubljana', model: 'fixture-stt' });
   }
-  if (u.pathname === '/wizard-search/api/config') return json(res, 200, { state: 'configured', capabilities: { web: true, images: true, overview: false }, switches: { 'search-bar-mic': on } });
+  if (u.pathname === '/wizard-search/api/config') return json(res, 200, { state: 'configured', capabilities: { web: true, images: true, overview: false }, switches: {} });
   if (u.pathname === '/wizard-search/api/overview-provider') return json(res, 200, { mode: 'off', tinfoil: {} });
   if (u.pathname === '/wizard-search/api/web') return json(res, 200, { results: [{ title: 'Fixture result: ' + u.searchParams.get('q'), host: 'example.test', url: 'https://example.test/r', snippet: 'Fixture web result' }] });
   if (u.pathname === '/wizard-search/api/images') return json(res, 200, { images: [] });

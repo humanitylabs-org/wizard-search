@@ -205,7 +205,7 @@
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
   WizardApp.ready({ name: 'Search', version: '0.3.11' });
 
-  let mic = null; // search bar microphone, only with the owner's search-bar-mic switch on (issue #29)
+  let mic = null; // search bar microphone (issue #29)
   // Back closes one layer per press: mic, image viewer, Images tab, then the search itself
   // (query and results, back to the empty start screen). Only then does the shell leave Search (issue #38).
   function clearSearch() {
@@ -221,7 +221,7 @@
     back: () => { if (mic?.busy()) return mic.cancel(); if (!$('#lb').hidden) { $('#lb').hidden = true; return true; } if (S.tab !== 'all') { tab('all'); return true; } if (S.q) { clearSearch(); return true; } return false; }
   });
   const feedback = message => { $('#voice-status').hidden = !message; $('#voice-status').textContent = message; };
-  configReady.then(d => { if (d?.switches?.['search-bar-mic'] === true) mic = window.SearchMic?.register({ button: $('#mic'), feedback, run: q => run(q) }) || null; });
+  mic = window.SearchMic?.register({ button: $('#mic'), feedback, run: q => run(q) }) || null;
   function voiceView(result) {
     S.es?.close(); S.seq++; S.q = result.q;
     // A voice query searches the frozen tab only. No additional inference or Chat call.

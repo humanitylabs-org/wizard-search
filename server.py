@@ -1140,10 +1140,6 @@ from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
 SWITCHES = [
-    {'id': 'search-bar-mic', 'name': 'Microphone in the search bar',
-     'description': 'A mic button in the search bar: tap, speak, tap again, and Search runs what you said. Works when '
-                    'Search is installed as its own app too. Uses the Wizard\'s own speech-to-text.',
-     'default': False, 'issues': ['humanitylabs-org/wizard-search#29']},
     {'id': 'fast-open', 'name': 'Open Search instantly',
      'description': 'Search opens in about a second on your phone, also on a slow connection or offline: it shows its '
                     'last screen straight away and refreshes a moment later. A new Search version still arrives on '
@@ -1155,6 +1151,8 @@ SWITCHES = [
                     'at the top.',
      'default': False, 'issues': ['humanitylabs-org/wizard-search#51']},
 ]
+# Switches whose feature is now on for everyone (approved at show-and-tell): their saved value is cleared at start.
+_SW_RETIRED = ('search-bar-mic',)  # wizard-search#29
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}
@@ -1194,6 +1192,17 @@ def _sw_set(switch_id, on):
         tmp.write_text(_sw_json.dumps(saved))
         _sw_os.replace(tmp, f)
     return switches_doc()
+
+
+def _sw_forget_retired():
+    with _sw_lock:
+        saved = _sw_saved()
+        if not any(k in saved for k in _SW_RETIRED):
+            return
+        f = _sw_file()
+        tmp = f.with_name(f.name + '.tmp')
+        tmp.write_text(_sw_json.dumps({k: v for k, v in saved.items() if k not in _SW_RETIRED}))
+        _sw_os.replace(tmp, f)
 
 
 def _sw_owner(h, write):
@@ -1289,5 +1298,9 @@ if __name__ == "__main__":
     ThreadingHTTPServer.daemon_threads = True
     bind = os.environ.get("WIZARD_SEARCH_BIND", "127.0.0.1")
     srv = ThreadingHTTPServer((bind, PORT), H)
+    try:
+        _sw_forget_retired()
+    except OSError:
+        pass
     print(f"wizard-search on {bind}:{PORT}{PREFIX}/", flush=True)
     srv.serve_forever()
