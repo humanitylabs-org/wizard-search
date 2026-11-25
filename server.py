@@ -1064,8 +1064,6 @@ class H(BaseHTTPRequestHandler):
         body, cache = f.read_bytes(), "no-cache"
         if f.name == "index.html":
             body = fast_open_page(body)
-            if switch_on("bottom-search-bar"):
-                body = bottom_bar_page(body)
         elif version and f.name in FAST_OPEN_ASSETS and version == asset_tag(f.name):
             cache = "private, max-age=31536000, immutable"  # the URL names this exact content (issue #42)
         return self._send(200, body, ctype, {"Cache-Control": cache})
@@ -1113,12 +1111,6 @@ def fast_open_page(page):
     return page
 
 
-# ---- Bottom search bar (switch bottom-search-bar, issue #51) -------------------------------------------------------
-# With the switch on, the page is marked data-bottom-bar before it paints, so the field opens at the bottom (thumb
-# reach, like the Google app) with no jump; app.js keeps the mark in step with the switch for a saved page.
-def bottom_bar_page(page):
-    return page.replace(b' data-app="wizard-search"', b' data-app="wizard-search" data-bottom-bar', 1)
-
 # ---- wizard.app-switches/1 ------------------------------------------------------------------------------------------
 # Owner feature switches for the Tracker's Try it (wizard-os docs/APP_SWITCHES.md). Shared block: the same text ships in
 # every Wizard app (template: wizard-app-manager templates/hello-wizard). Every new feature ships behind a switch, off by
@@ -1135,15 +1127,9 @@ import threading as _sw_threading
 from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
-SWITCHES = [
-    {'id': 'bottom-search-bar', 'name': 'Search field at the bottom',
-     'description': 'On the phone the search field (and its mic) sits at the bottom of the screen, above the keyboard, '
-                    'where your thumb reaches it, like the Google app. Results scroll above it; All and Images stay '
-                    'at the top.',
-     'default': False, 'issues': ['humanitylabs-org/wizard-search#51']},
-]
+SWITCHES = []
 # Switches whose feature is now on for everyone (approved at show-and-tell): their saved value is cleared at start.
-_SW_RETIRED = ('search-bar-mic', 'fast-open')  # wizard-search#29, #42
+_SW_RETIRED = ('search-bar-mic', 'fast-open', 'bottom-search-bar')  # wizard-search#29, #42, #51
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}

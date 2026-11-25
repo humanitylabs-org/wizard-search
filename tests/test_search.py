@@ -168,13 +168,13 @@ class SearchTests(unittest.TestCase):
             self.assertNotIn('search-bar-mic', self.request('/api/config')[1]['switches'])
             f = os.path.join(tmp, 'switches.json')
             with open(f, 'w') as fh:
-                json.dump({'search-bar-mic': False, 'bottom-search-bar': True}, fh)
+                json.dump({'search-bar-mic': False, 'other': True}, fh)
             s._sw_forget_retired()
             with open(f) as fh:
-                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
+                self.assertEqual(json.load(fh), {'other': True})
             s._sw_forget_retired()  # nothing left to clear: no error, file unchanged
             with open(f) as fh:
-                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
+                self.assertEqual(json.load(fh), {'other': True})
 
     def test_fast_open_is_on_for_everyone_and_its_switch_is_gone(self):
         # Issue #42 approved: no fast-open switch any more, and a saved value for it is cleared at start.
@@ -183,10 +183,10 @@ class SearchTests(unittest.TestCase):
             self.assertNotIn('fast-open', self.request('/api/config')[1]['switches'])
             f = os.path.join(tmp, 'switches.json')
             with open(f, 'w') as fh:
-                json.dump({'fast-open': False, 'bottom-search-bar': True}, fh)
+                json.dump({'fast-open': False, 'other': True}, fh)
             s._sw_forget_retired()
             with open(f) as fh:
-                self.assertEqual(json.load(fh), {'bottom-search-bar': True})
+                self.assertEqual(json.load(fh), {'other': True})
             with urllib.request.urlopen(self.base + '/') as r:  # a saved "off" never brings the plain page back
                 self.assertIn('src="app.js?v=%s"' % s.asset_tag('app.js'), r.read().decode())
         app = (ROOT / 'web/app.js').read_text()
@@ -223,25 +223,29 @@ class SearchTests(unittest.TestCase):
             reported = app.split("WizardApp.ready({ name: 'Search', version: '")[1].split("'")[0]
             self.assertIn("const SEARCH_VERSION = '%s'" % reported, app)
 
-    def test_bottom_search_bar_switch_off_by_default(self):
-        # Issue #51: off by default (field on top, no mark); on, the page is marked data-bottom-bar before it paints.
+    def test_bottom_search_bar_is_on_for_everyone_and_its_switch_is_gone(self):
+        # Issue #51 approved: no bottom-search-bar switch any more, a saved value for it is cleared at start, and a
+        # saved "off" never brings the field back to the top: the phone layout is plain CSS, with no page mark.
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'WIZARD_SWITCHES_DIR': tmp}):
-            sw = next(x for x in s.switches_doc()['switches'] if x['id'] == 'bottom-search-bar')
-            self.assertEqual((sw['on'], sw['default'], sw['issues']), (False, False, ['humanitylabs-org/wizard-search#51']))
-            self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], False)
-            with urllib.request.urlopen(self.base + '/') as r:
-                self.assertIn('<html lang="en" data-app="wizard-search">', r.read().decode())
-            s._sw_set('bottom-search-bar', True)
-            self.assertIs(self.request('/api/config')[1]['switches']['bottom-search-bar'], True)
+            self.assertNotIn('bottom-search-bar', [x['id'] for x in s.switches_doc()['switches']])
+            self.assertNotIn('bottom-search-bar', self.request('/api/config')[1]['switches'])
+            f = os.path.join(tmp, 'switches.json')
+            with open(f, 'w') as fh:
+                json.dump({'bottom-search-bar': False, 'other': True}, fh)
+            s._sw_forget_retired()
+            with open(f) as fh:
+                self.assertEqual(json.load(fh), {'other': True})
             with urllib.request.urlopen(self.base + '/') as r:
                 page = r.read().decode()
-            self.assertIn('<html lang="en" data-app="wizard-search" data-bottom-bar>', page)
-            self.assertIn('src="app.js?v=%s"' % s.asset_tag('app.js'), page)  # with the fast-open asset URLs
+            self.assertIn('<html lang="en" data-app="wizard-search">', page)
+            self.assertIn('src="app.js?v=%s"' % s.asset_tag('app.js'), page)
         app = (ROOT / 'web/app.js').read_text()
         css = (ROOT / 'web/app.css').read_text()
-        self.assertIn("d.switches?.['bottom-search-bar'] === true", app)
-        self.assertIn('html[data-bottom-bar] .bar{position:fixed', css)
-        self.assertIn('env(safe-area-inset-bottom', css)
+        self.assertNotIn('bottom-search-bar', app); self.assertNotIn('data-bottom-bar', app)
+        self.assertNotIn('data-bottom-bar', css); self.assertNotIn('bottom_bar_page', (ROOT / 'server.py').read_text())
+        phone = css.split('@media (max-width:820px){', 1)[1].split('\n}', 1)[0]
+        self.assertIn('.bar{position:fixed', phone)
+        self.assertIn('env(safe-area-inset-bottom', phone)
 
     def test_search_bar_mic_uses_shared_capture_and_system_speech(self):
         mic = (ROOT / 'web/search-mic.js').read_text()

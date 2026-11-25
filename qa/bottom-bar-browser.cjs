@@ -1,8 +1,8 @@
-/* Bottom search bar (issue #51): phone screen, switch off vs on, with the mic switch on so the mic sits in the bar.
+/* Bottom search bar (issue #51, on for everyone): phone screen vs a wide window.
  * Runs the REAL server.py behind a small gateway that serves the REAL shared client from a wizard-ux checkout and
- * answers web/images with fixtures. Checks: off = field on top (unchanged); on = field fixed at the bottom on an opaque
- * panel, tabs at the top, the last result scrolls clear of the bar, the bar rides above a keyboard (--kb), a light
- * skin's tokens paint the panel,. Screenshots go to $QA_EVIDENCE (default evidence/).
+ * answers web/images with fixtures. Checks: phone = field fixed at the bottom on an opaque panel, tabs at the top, the
+ * last result scrolls clear of the bar, the bar rides above a keyboard (--kb), a light skin's tokens paint the panel;
+ * a wide window keeps the field on top. A saved "off" for the old switch changes nothing. Screenshots go to $QA_EVIDENCE (default evidence/).
  * Usage: WIZARD_UX_WEB=<ux>/web PLAYWRIGHT_MODULE=<path>/playwright node qa/bottom-bar-browser.cjs */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const http = require('node:http'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
@@ -11,7 +11,7 @@ const repo = path.resolve(__dirname, '..'), ux = path.resolve(process.env.WIZARD
 const evidence = process.env.QA_EVIDENCE || path.join(repo, 'evidence');
 fs.mkdirSync(evidence, { recursive: true });
 const data = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'search51-'));
-const setSwitch = on => fs.writeFileSync(path.join(data, 'switches.json'), JSON.stringify({ 'bottom-search-bar': on }));
+fs.writeFileSync(path.join(data, 'switches.json'), JSON.stringify({ 'bottom-search-bar': false })); // retired switch
 const port = 20000 + Math.floor(Math.random() * 20000);
 const py = spawn('python3', ['server.py'], { cwd: repo, stdio: 'ignore', env: { ...process.env, WIZARD_SEARCH_PORT: String(port),
   WIZARD_SEARCH_DATA: data, WIZARD_SWITCHES_DIR: data, SEARXNG_URL: 'http://searx.invalid:8080' } });
@@ -33,7 +33,7 @@ const gateway = http.createServer((req, res) => {
 const measure = page => page.evaluate(() => {
   const r = s => { const b = document.querySelector(s).getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
   const panel = getComputedStyle(document.querySelector('.top'), '::after');
-  return { vh: innerHeight, marked: document.documentElement.hasAttribute('data-bottom-bar'), bar: r('#f'), tabs: r('.tabs'),
+  return { vh: innerHeight, bar: r('#f'), tabs: r('.tabs'),
     mic: !document.querySelector('#mic').hidden, micInBar: document.querySelector('#f').contains(document.querySelector('#mic')),
     panel: panel.content !== 'none' ? panel.backgroundColor : null, hint: document.querySelector('#type-where').textContent };
 });
@@ -48,18 +48,10 @@ const measure = page => page.evaluate(() => {
     await page.goto(base + (q ? '?q=' + q : '')); await page.waitForFunction(() => window.WizardSearch && !document.querySelector('#mic').hidden);
     if (q) await page.waitForSelector('#web li'); return page; };
   try {
-    setSwitch(false);
     let page = await open('');
-    const off = await measure(page); console.log('off  ', JSON.stringify(off));
-    assert.equal(off.marked, false); assert.ok(off.bar.top < 20, 'off: field on top'); assert.equal(off.hint, 'above');
-    await page.screenshot({ path: path.join(evidence, 'bottom-bar-off.png') });
-    await page.close();
-
-    setSwitch(true);
-    page = await open('');
-    const on = await measure(page); console.log('on   ', JSON.stringify(on));
-    assert.equal(on.marked, true); assert.ok(on.bar.bottom > on.vh - 20 && on.bar.bottom <= on.vh, 'on: field at the bottom');
-    assert.ok(on.tabs.top < 40, 'on: tabs at the top'); assert.ok(on.mic && on.micInBar, 'mic in the bottom bar');
+    const on = await measure(page); console.log('phone', JSON.stringify(on));
+    assert.ok(on.bar.bottom > on.vh - 20 && on.bar.bottom <= on.vh, 'phone: field at the bottom');
+    assert.ok(on.tabs.top < 40, 'phone: tabs at the top'); assert.ok(on.mic && on.micInBar, 'mic in the bottom bar');
     assert.equal(on.panel, 'rgb(11, 11, 20)', 'opaque dark fallback panel'); assert.equal(on.hint, 'below');
     await page.screenshot({ path: path.join(evidence, 'bottom-bar-on-empty.png') });
     await page.close();
@@ -82,10 +74,12 @@ const measure = page => page.evaluate(() => {
     await page.screenshot({ path: path.join(evidence, 'bottom-bar-on-light-skin.png') });
     errors.length = 0;
     await page.close();
-    // Turning the switch off puts the field back on top on the next open, even from a page marked on.
-    setSwitch(false);
-    page = await open('');
-    const again = await measure(page); console.log('off2 ', JSON.stringify(again)); assert.equal(again.marked, false);
+    // A wide window keeps the field on top (the layout only applies at 820 px and narrower).
+    page = await ctx.newPage(); await page.setViewportSize({ width: 1280, height: 800 });
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(base); await page.waitForFunction(() => window.WizardSearch && !document.querySelector('#mic').hidden);
+    const wide = await measure(page); console.log('wide ', JSON.stringify(wide));
+    assert.ok(wide.bar.top < 20, 'wide: field on top'); assert.equal(wide.panel, null); assert.equal(wide.hint, 'above');
     await page.close();
     assert.deepEqual(errors, []);
     console.log('PASS');
