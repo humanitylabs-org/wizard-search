@@ -35,15 +35,9 @@
     $('#setup').hidden = false; document.documentElement.setAttribute('data-config-known', '');
     return null;
   });
-  // Bottom search bar (owner switch bottom-search-bar, issue #51): the server marks the page data-bottom-bar before it
-  // paints; the live switch state wins over a saved copy of the page. The field then rides above the
+  // Bottom search bar (issue #51, on for everyone): on a phone the field sits at the bottom and rides above the
   // on-screen keyboard: --kb is how much of the layout viewport the keyboard covers (0 where the page itself resizes).
-  const bottomBar = on => {
-    document.documentElement.toggleAttribute?.('data-bottom-bar', !!on);
-    const hint = $('#type-where'); if (hint) hint.textContent = on && window.matchMedia?.('(max-width:820px)').matches ? 'below' : 'above';
-  };
-  bottomBar(document.documentElement.hasAttribute?.('data-bottom-bar'));
-  configReady.then(d => { if (d) bottomBar(d.switches?.['bottom-search-bar'] === true); });
+  { const hint = $('#type-where'); if (hint && window.matchMedia?.('(max-width:820px)').matches) hint.textContent = 'below'; }
   const vv = window.visualViewport;
   if (vv) {
     const kb = () => document.documentElement.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))}px`);
