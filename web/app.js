@@ -11,7 +11,7 @@
   const setupText = 'Setup required — configure this capability using the setup instructions above.';
   // Fast open (owner switch fast-open, issue #42): the server marks the page; Search then paints the last-known
   // provider state at once, keeps its shell in a scoped worker (sw.js) and refreshes everything a moment later.
-  const SEARCH_VERSION = '0.3.11';
+  const SEARCH_VERSION = '0.3.12';
   const FAST = !!document.documentElement.hasAttribute?.('data-fast-open');
   const LAST = 'wizard-search:last';
   const lastSeen = (() => { if (!FAST) return null; try { return JSON.parse(window.localStorage.getItem(LAST) || 'null'); } catch (_) { return null; } })();
@@ -203,7 +203,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#lb').hidden) { e.stopPropagation(); $('#lb').hidden = true; } }, true);
 
   if (!window.WizardApp) { $('#setup').hidden = false; $('#setup-status').textContent = 'Wizard shared client missing. Configure the gateway resource /wizard-os-home/core/app-client.js before opening Search.'; return; }
-  WizardApp.ready({ name: 'Search', version: '0.3.11' });
+  WizardApp.ready({ name: 'Search', version: '0.3.12' });
 
   let mic = null; // search bar microphone (issue #29)
   // Back closes one layer per press: mic, image viewer, Images tab, then the search itself
