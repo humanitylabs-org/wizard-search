@@ -195,7 +195,7 @@ INFLIGHT_LOCK = threading.Lock()
 
 def norm_q(q: str) -> str:
     # Dictation ends a search with a full stop ("Yoneda lemma."); engines read that as a different query.
-    return re.sub(r"[\s.,;:!?…。！？、]+$", "", re.sub(r"\s+", " ", (q or "")).strip()[:300]).strip()
+    return re.sub(r"\s+", " ", (q or "")).strip()[:300].rstrip(" .,;:!?…。！？、")
 
 
 def curl(url: str, *, socks: bool, timeout: int = 15, binary: bool = False, max_bytes: int = 0):
