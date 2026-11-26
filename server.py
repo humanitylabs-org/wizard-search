@@ -557,6 +557,7 @@ def web_search(q: str) -> dict:
     cloud_at = started + ((3.0 if SEARXNG_URL else 1.2) if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
     cloud_started = slow_started = False
     reserve: tuple[list[dict], str] | None = None
+    off_topic = ""  # a lane that answered, but with nothing on topic: "No web results", not "provider down"
     while time.time() - started < 30:
         if not cloud_started and (time.time() >= cloud_at or not futs):
             if FC_CLOUD_KEY:
@@ -578,6 +579,7 @@ def web_search(q: str) -> dict:
             except LaneEmpty as e:
                 if e.reserve and not reserve:
                     reserve = (e.reserve, lane)
+                off_topic = off_topic or (lane if str(e) != "empty searxng" else "")
                 continue
             except Exception:
                 continue
@@ -587,6 +589,7 @@ def web_search(q: str) -> dict:
                 continue
             rows = _on_topic_rows(q, rows)
             if not rows:
+                off_topic = off_topic or lane
                 continue
             return _finish(q, rows, lane)
         fast_left = not cloud_started or any(v in ("searxng", "ddg", "cloud") for v in futs.values())
@@ -598,6 +601,8 @@ def web_search(q: str) -> dict:
             slow_started = True
     if reserve:
         return _finish(q, reserve[0], reserve[1])
+    if off_topic:
+        return _finish(q, [], off_topic)
     raise RuntimeError("web providers unavailable or returned no results")
 
 
@@ -748,9 +753,8 @@ def _ask(q: str, rows: list[dict]) -> str:
 
 
 def overview(q: str) -> dict:
+    # No on-topic rows (#72): the model still answers from what it knows (OVERVIEW_SYSTEM), with no chips.
     web, rows, intent = _overview_rows(q)
-    if not rows:
-        return {"q": q, "answer": "", "sources": [], "error": "no results"}
     t0 = time.time()
     model = (llm() or {}).get("model", LLM_MODEL)
     answer = _ask(q, rows)
@@ -804,9 +808,6 @@ def overview_stream(q: str, emit) -> None:
     web, rows, intent = _overview_rows(q)
     meta = {"rewritten": intent} if intent else {}
     emit("sources", {"sources": _sources(rows) if rows else [], "source": web.get("source", ""), "ms": int((time.time() - t0) * 1000), **meta})
-    if not rows:
-        emit("done", {"error": "no results"})
-        return
     model = (llm() or {}).get("model", LLM_MODEL)
     answer = _stream_answer(q, rows, emit)
     if _is_no_answer(answer) and not intent:

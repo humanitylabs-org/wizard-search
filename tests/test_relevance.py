@@ -107,10 +107,35 @@ class RelevanceTests(unittest.TestCase):
             out, _ = self.search(junk, 'Yoneda lemma')
         self.assertEqual((out['source'], [r['url'] for r in out['results']]), ('cloud', ['https://cloud.example/yoneda']))
 
-    def test_only_junk_and_no_other_lane_is_an_error_not_junk(self):
+    def test_only_junk_and_no_other_lane_is_no_results_not_junk(self):
+        # The provider answered, so the page says "No web results", not "provider unavailable".
         junk = [x for x in YONEDA if x['engines'] == ['bing']]
+        out, _ = self.search(junk, 'Yoneda lemma')
+        self.assertEqual((out['source'], out['results']), ('searxng', []))
+
+    def test_provider_down_is_still_an_error(self):
         with self.assertRaises(RuntimeError):
-            self.search(junk, 'Yoneda lemma')
+            self.search([], 'Yoneda lemma')
+
+    def test_overview_answers_from_the_model_when_nothing_is_on_topic(self):
+        asked = []
+
+        def fake_llm(req, timeout=0):
+            body = json.loads(req.data)
+            asked.append(body['messages'][1]['content'])
+
+            class R:
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+                def read(self): return json.dumps({'choices': [{'message': {'content': 'The Yoneda lemma says...'}}]}).encode()
+            return R()
+        with patch.multiple(s, LLM_URL='http://llm.invalid/v1/chat/completions', TINFOIL_KEY='x',
+                            web_search=lambda q: {'q': q, 'source': 'searxng', 'results': []},
+                            WEB_CACHE=s.TTLCache(10, 60), OVR_CACHE=s.TTLCache(10, 60)), \
+                patch.object(s.urllib.request, 'urlopen', fake_llm):
+            out = s.overview('Yoneda lemma')
+        self.assertEqual((out['answer'], out['sources']), ('The Yoneda lemma says...', []))
+        self.assertTrue(asked and asked[0].startswith('Query: Yoneda lemma'))
 
     def test_demoted_rows_are_the_last_resort(self):
         s.ENGINE_HEALTH['bing'] = [True] * 5
