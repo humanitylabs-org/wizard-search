@@ -1,7 +1,7 @@
 services:
   wizard-search:
     # Public multi-arch image built from this repo by .github/workflows/image.yml (app/Dockerfile).
-    image: ghcr.io/humanitylabs-org/wizard-search:sha-3d9cc92b75fa4bc1208cc15593e90c026737d3c5@sha256:c067854fb2b1540fa9e564e906c5f7fae362fe0623a0bdcaf0d7eeff48b2f4ef
+    image: ghcr.io/humanitylabs-org/wizard-search:sha-804b975f37e7c4c4383b246312fcbe999e84037c@sha256:bb4edfc285229697ccbf0fb712197f0142648a4daa67b71be82f41045e34c1aa
     user: '1000:1000'
     read_only: true
     cap_drop: [ALL]
