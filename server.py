@@ -194,7 +194,8 @@ INFLIGHT_LOCK = threading.Lock()
 
 
 def norm_q(q: str) -> str:
-    return re.sub(r"\s+", " ", (q or "")).strip()[:300]
+    # Dictation ends a search with a full stop ("Yoneda lemma."); engines read that as a different query.
+    return re.sub(r"[\s.,;:!?…。！？、]+$", "", re.sub(r"\s+", " ", (q or "")).strip()[:300]).strip()
 
 
 def curl(url: str, *, socks: bool, timeout: int = 15, binary: bool = False, max_bytes: int = 0):
@@ -249,7 +250,7 @@ def parse_bing_images(page: str) -> list[dict]:
     return out
 
 
-def _searx(q: str, category: str = "general") -> list[dict]:
+def _searx_raw(q: str, category: str = "general") -> list[dict]:
     """Bundled SearXNG sidecar: free, no account, fans out to several public engines at once."""
     if not SEARXNG_URL:
         raise RuntimeError("searxng not configured")
@@ -257,14 +258,89 @@ def _searx(q: str, category: str = "general") -> list[dict]:
     req = urllib.request.Request(SEARXNG_URL + "/search?" + qs, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:  # nosec B310 private sidecar
         d = json.load(r)
-    return [x for x in d.get("results") or [] if str(x.get("url", "")).startswith(("http://", "https://"))
-            and urllib.parse.urlsplit(str(x["url"])).hostname]  # Bing sometimes yields "http:///videos/..."
+    return [x for x in d.get("results") or [] if isinstance(x, dict)]
+
+
+def _has_host(url: str) -> bool:
+    try:
+        return bool(urllib.parse.urlsplit(url).hostname)  # Bing/Brave sometimes yield "http:///videos/..."
+    except ValueError:
+        return False
+
+
+def _searx(q: str, category: str = "general") -> list[dict]:
+    return [x for x in _searx_raw(q, category) if str(x.get("url", "")).startswith(("http://", "https://"))
+            and _has_host(str(x["url"]))]
+
+
+class LaneEmpty(RuntimeError):
+    """A lane answered, but nothing it returned may be shown first. `reserve` holds on-topic rows that only
+    demoted engines returned: shown only when no other lane has anything."""
+
+    def __init__(self, msg: str, reserve: list[dict] | None = None):
+        super().__init__(msg)
+        self.reserve = reserve or []
+
+
+# Engine health (#72): from a flagged IP some engines (Bing, Yahoo) answer every query with unrelated pages and
+# Brave with host-less links. SearXNG interleaves engines, so one junk engine fills half the page. Each search
+# records, per engine, whether most of its rows were junk; an engine junk on most recent searches is demoted
+# (its rows drop unless a healthy engine returned the same page). Its rows are still scored, so it recovers.
+ENGINE_WINDOW, ENGINE_MIN_SEEN, ENGINE_BAD_SHARE = 20, 4, 0.6
+ENGINE_HEALTH: dict[str, list[bool]] = {}
+ENGINE_LOCK = threading.Lock()
+
+
+def _engine_demoted(name: str) -> bool:
+    seen = ENGINE_HEALTH.get(name) or []
+    return len(seen) >= ENGINE_MIN_SEEN and sum(seen) >= ENGINE_BAD_SHARE * len(seen)
+
+
+def demoted_engines() -> list[str]:
+    with ENGINE_LOCK:
+        return sorted(n for n in ENGINE_HEALTH if _engine_demoted(n))
+
+
+def _engines_of(x: dict) -> list[str]:
+    names = x.get("engines") or ([x["engine"]] if x.get("engine") else [])
+    return [str(n) for n in names if n]
+
+
+def _record_engines(q: str, raw: list[dict]) -> None:
+    tally: dict[str, list[int]] = {}
+    for x in raw:
+        url = str(x.get("url") or "")
+        bad = not _has_host(url) or not _on_topic(q, {"url": url, "title": str(x.get("title") or ""),
+                                                      "snippet": str(x.get("content") or "")})
+        for n in _engines_of(x):
+            t = tally.setdefault(n, [0, 0])
+            t[0] += 1
+            t[1] += bad
+    with ENGINE_LOCK:
+        for n, (total, bad) in tally.items():
+            ENGINE_HEALTH[n] = (ENGINE_HEALTH.get(n, []) + [bad * 2 > total])[-ENGINE_WINDOW:]
 
 
 def _searx_web(q: str) -> list[dict]:
-    rows = [{"url": x["url"], "title": x.get("title") or x["url"], "snippet": x.get("content") or ""} for x in _searx(q)]
+    raw = _searx_raw(q)
+    if not raw:
+        raise LaneEmpty("empty searxng")
+    if _query_words(q):
+        _record_engines(q, raw)
+    with ENGINE_LOCK:
+        demoted = {n for n in ENGINE_HEALTH if _engine_demoted(n)}
+    rows, reserve = [], []
+    for x in raw:
+        url = str(x.get("url") or "")
+        if not url.startswith(("http://", "https://")) or not _has_host(url):
+            continue
+        row = {"url": url, "title": x.get("title") or url, "snippet": x.get("content") or ""}
+        if not _on_topic(q, row):
+            continue
+        names = _engines_of(x)
+        (reserve if names and all(n in demoted for n in names) else rows).append(row)
     if not rows:
-        raise RuntimeError("empty searxng")
+        raise LaneEmpty("no on-topic searxng rows", reserve)
     return rows
 
 
@@ -342,6 +418,43 @@ def _relevant(q: str, rows: list[dict]) -> bool:
         return bool(rows)
     hits = sum(1 for r in rows if sum(w in (r["title"] + " " + r["snippet"] + " " + r["url"]).lower() for w in words) >= max(1, (len(words) + 1) // 2))
     return hits >= max(2, len(rows) // 2)
+
+
+def _fold(text: str) -> str:
+    """Lower-case, accents off, so "Lisboa" / "lisboa" and "café" / "cafe" compare equal."""
+    text = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in text if not unicodedata.combining(c))
+
+
+def _query_words(q: str) -> list[str]:
+    return [w for w in re.findall(r"\w+", _fold(q)) if w not in STOP and (len(w) > 1 or not w.isascii())]
+
+
+def _word_forms(w: str) -> set[str]:
+    forms = {w}
+    for end in ("ing", "es", "ed", "s"):
+        if w.endswith(end) and len(w) - len(end) >= 3:
+            forms.add(w[: -len(end)])
+    return forms
+
+
+def _on_topic(q: str, row: dict) -> bool:
+    """Per-row check for every lane (#72): keep a row whose title, snippet or address mentions the search's
+    content words. Lenient: one word for a short (1-2 word) or long (7+) search, two for the rest, so a page that
+    is only about "change" never answers "how to change a bike tire". Never judges the whole batch (wizard-os#616)."""
+    words = _query_words(q)
+    if not words:
+        return True
+    hay = _fold(" ".join((str(row.get("title") or ""), str(row.get("snippet") or ""),
+                          urllib.parse.unquote(str(row.get("url") or "")))))
+    squashed = re.sub(r"[\W_]+", "", hay)
+    hits = sum(1 for w in dict.fromkeys(words) if any(f in hay or f in squashed for f in _word_forms(w)))
+    need = 1 if len(set(words)) <= 2 or len(set(words)) >= 7 else 2
+    return hits >= need
+
+
+def _on_topic_rows(q: str, rows: list[dict]) -> list[dict]:
+    return [r for r in rows if _has_host(str(r.get("url") or "")) and _on_topic(q, r)]
 
 
 def _serp(q: str) -> list[dict]:
@@ -443,6 +556,7 @@ def web_search(q: str) -> dict:
     # Free lanes get a head start; a paid lane (if any) only joins when they stall.
     cloud_at = started + ((3.0 if SEARXNG_URL else 1.2) if futs else 0)  # free lane gets a short head start; paid lane only if it stalls
     cloud_started = slow_started = False
+    reserve: tuple[list[dict], str] | None = None
     while time.time() - started < 30:
         if not cloud_started and (time.time() >= cloud_at or not futs):
             if FC_CLOUD_KEY:
@@ -461,11 +575,18 @@ def web_search(q: str) -> dict:
             lane = futs.pop(f)
             try:
                 rows = f.result()
+            except LaneEmpty as e:
+                if e.reserve and not reserve:
+                    reserve = (e.reserve, lane)
+                continue
             except Exception:
                 continue
-            # SearXNG ranks the whole question itself; only the stop-word-dropping lanes need the
-            # relevance check (a long question has ~10 content words, so it rejected every SearXNG batch).
+            # The stop-word-dropping lanes also keep their whole-batch check; every lane, SearXNG included,
+            # then drops each off-topic or host-less row (#72). A lane left with nothing falls through.
             if lane in ("ddg", "local") and not _relevant(q, rows):
+                continue
+            rows = _on_topic_rows(q, rows)
+            if not rows:
                 continue
             return _finish(q, rows, lane)
         fast_left = not cloud_started or any(v in ("searxng", "ddg", "cloud") for v in futs.values())
@@ -475,11 +596,13 @@ def web_search(q: str) -> dict:
             if FIRECRAWL_URL:
                 futs[POOL.submit(_local, q)] = "local"
             slow_started = True
+    if reserve:
+        return _finish(q, reserve[0], reserve[1])
     raise RuntimeError("web providers unavailable or returned no results")
 
 
 def _finish(q: str, rows: list[dict], source: str) -> dict:
-    rows = [r for r in rows if str(r.get("url", "")).startswith(("https://", "http://"))]
+    rows = [r for r in rows if str(r.get("url", "")).startswith(("https://", "http://")) and _has_host(str(r["url"]))]
     for r in rows:
         r["host"] = re.sub(r"^www\.", "", urllib.parse.urlsplit(r["url"]).hostname or "")
         sn = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", r.get("snippet") or "")          # images
@@ -487,7 +610,10 @@ def _finish(q: str, rows: list[dict], source: str) -> dict:
         sn = re.sub(r"(^|\s)#{1,6}\s+", r"\1", sn)                                # headings
         sn = re.sub(r"[*_`]{1,3}", "", sn)
         r["snippet"] = " ".join(sn.split())[:320]
-    return {"q": q, "source": source, "results": rows[:10]}
+    out = {"q": q, "source": source, "results": rows[:10]}
+    if source == "searxng":
+        out["demoted"] = demoted_engines()  # engines whose rows are held back as junk right now (#72)
+    return out
 
 
 OVERVIEW_SYSTEM = """You write the short answer box at the top of a search results page.
