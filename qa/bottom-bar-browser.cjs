@@ -67,10 +67,10 @@ const measure = page => page.evaluate(() => {
     await page.evaluate(() => document.documentElement.style.setProperty('--kb', '300px'));
     const kb = await measure(page); console.log('kb   ', JSON.stringify(kb.bar)); assert.ok(Math.abs(kb.bar.bottom - (kb.vh - 300 - 11)) <= 1, 'bar above keyboard');
     await page.evaluate(() => document.documentElement.style.setProperty('--kb', '0px'));
-    // A light skin: the panel takes the skin's canvas token, not a hard-coded dark.
+    // A light skin (tokens as the shell pushes them: canvas transparent): the panel takes the skin's solid base, not a hard-coded dark.
     await page.evaluate(() => { const s = document.documentElement.style; document.documentElement.setAttribute('data-wz-hosted', '');
-      s.setProperty('--wz-canvas', '#f6f4ee'); s.setProperty('--wz-surface', '#ffffff'); s.setProperty('--wz-border', '#d9d4c7'); s.setProperty('--wz-text', '#1d1b16'); s.setProperty('--wz-text-secondary', '#4a463c'); s.setProperty('--wz-text-muted', '#7b766a'); s.setProperty('--wz-accent', '#5b3fd6'); });
-    const light = await measure(page); console.log('light', light.panel); assert.equal(light.panel, 'rgb(246, 244, 238)');
+      s.setProperty('--wz-canvas', 'transparent'); s.setProperty('--wz-base', '#f6f4ee'); s.setProperty('--wz-chrome', 'transparent'); s.setProperty('--wz-surface', '#ffffff'); s.setProperty('--wz-border', '#d9d4c7'); s.setProperty('--wz-text', '#1d1b16'); s.setProperty('--wz-text-secondary', '#4a463c'); s.setProperty('--wz-text-muted', '#7b766a'); s.setProperty('--wz-accent', '#5b3fd6'); });
+    const light = await measure(page); console.log('light', light.panel); assert.match(light.panel, /^(rgb\(246, 244, 238\)|color\(srgb 0\.964706 0\.956863 0\.933333\))$/);
     await page.screenshot({ path: path.join(evidence, 'bottom-bar-on-light-skin.png') });
     errors.length = 0;
     await page.close();

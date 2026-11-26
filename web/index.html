@@ -11,7 +11,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="app.css">
   <style>
-  :root[data-wz-hosted] {--bg:var(--wz-canvas); --card:var(--wz-surface); --line:var(--wz-border); --ink:var(--wz-text); --ink2:var(--wz-text-secondary); --ink3:var(--wz-text-muted); --link:var(--wz-accent);}
+  :root[data-wz-hosted] {--bg:var(--wz-canvas); --card:var(--wz-surface); --line:var(--wz-border); --ink:var(--wz-text); --ink2:var(--wz-text-secondary); --ink3:var(--wz-text-muted); --link:var(--wz-accent); --chrome:var(--wz-chrome,transparent); --panel:var(--wz-base,#0b0b14);}
+  @supports (color:color(from red srgb r g b / 1)) { :root[data-wz-hosted] {--panel:color(from var(--wz-base,#0b0b14) srgb r g b / 1);} }
   html[data-wz-hosted],html[data-wz-hosted] body {background:var(--wz-canvas);}
   </style>
 </head>
